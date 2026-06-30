@@ -1,1 +1,4 @@
 Media banner in notification pulldown should open app on tap
+Set folders in a separate Settings window
+Get rid of "Play" buttons. When track is tapped, load it but don't play it.
+I should tap a button to switch to a screen that lists playlists. That screen should have a button to create a new playlist. I should be able to tap a playlist to select it or long-press it to edit it.
