@@ -2,6 +2,7 @@ package net.shadowspire.promenade2.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.net.toUri
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -20,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -30,6 +32,9 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -62,6 +67,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import net.shadowspire.promenade2.core.model.AutoMuteSettings
 import net.shadowspire.promenade2.core.model.Playlist
 import net.shadowspire.promenade2.core.model.PlaylistId
@@ -106,6 +113,11 @@ fun PromenadeApp() {
             val editingPlaylist = library.playlists.firstOrNull { playlist ->
                 playlist.playlist.id.fileName == editingPlaylistFileName
             }
+            val currentTrack = currentTrackFor(
+                library = library,
+                activePlaylist = activePlaylist,
+                playback = playback,
+            )
             var restoredInitialSelection by rememberSaveable {
                 mutableStateOf(false)
             }
@@ -167,10 +179,13 @@ fun PromenadeApp() {
                 library = library,
                 preferences = preferences,
                 activePlaylist = activePlaylist,
+                currentTrack = currentTrack,
                 editingPlaylist = editingPlaylist,
                 onNavigateToPlayer = { destinationName = PromenadeDestination.Player.name },
                 onNavigateToPlaylists = { destinationName = PromenadeDestination.Playlists.name },
                 onNavigateToSettings = { destinationName = PromenadeDestination.Settings.name },
+                onNavigateToInstructions = { destinationName = PromenadeDestination.Instructions.name },
+                onNavigateToDiagnostics = { destinationName = PromenadeDestination.Diagnostics.name },
                 onChooseTracksFolder = { tracksFolderPicker.launch(null) },
                 onChoosePlaylistsFolder = { playlistsFolderPicker.launch(null) },
                 onRescan = appState::rescan,
@@ -264,6 +279,8 @@ private enum class PromenadeDestination {
     Player,
     Playlists,
     Settings,
+    Instructions,
+    Diagnostics,
 }
 
 private fun restoreLastLoadedSelection(
@@ -296,6 +313,22 @@ private fun restoreLastLoadedSelection(
     }
 }
 
+private fun currentTrackFor(
+    library: LibraryState,
+    activePlaylist: ResolvedPlaylist?,
+    playback: PlaybackSnapshot,
+): Track? {
+    val index = playback.currentIndex ?: return null
+    val title = playback.title
+    val playlistTrack = activePlaylist?.resolvedTracks?.getOrNull(index)
+    if (playlistTrack?.name == title) {
+        return playlistTrack
+    }
+    return library.tracks.getOrNull(index)?.takeIf { track -> track.name == title }
+        ?: playlistTrack
+        ?: library.tracks.getOrNull(index)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PromenadeScreen(
@@ -304,10 +337,13 @@ private fun PromenadeScreen(
     library: LibraryState,
     preferences: AppPreferences,
     activePlaylist: ResolvedPlaylist?,
+    currentTrack: Track?,
     editingPlaylist: ResolvedPlaylist?,
     onNavigateToPlayer: () -> Unit,
     onNavigateToPlaylists: () -> Unit,
     onNavigateToSettings: () -> Unit,
+    onNavigateToInstructions: () -> Unit,
+    onNavigateToDiagnostics: () -> Unit,
     onChooseTracksFolder: () -> Unit,
     onChoosePlaylistsFolder: () -> Unit,
     onRescan: () -> Unit,
@@ -340,36 +376,66 @@ private fun PromenadeScreen(
                             PromenadeDestination.Player -> "Promenade 2"
                             PromenadeDestination.Playlists -> "Playlists"
                             PromenadeDestination.Settings -> "Settings"
+                            PromenadeDestination.Instructions -> "Instructions"
+                            PromenadeDestination.Diagnostics -> "Diagnostics"
                         },
                     )
                 },
                 actions = {
-                    IconButton(
-                        onClick = onNavigateToPlayer,
-                        enabled = destination != PromenadeDestination.Player,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.PlayArrow,
-                            contentDescription = "Open player",
-                        )
+                    if (destination != PromenadeDestination.Player) {
+                        IconButton(onClick = onNavigateToPlayer) {
+                            Icon(
+                                imageVector = Icons.Filled.PlayArrow,
+                                contentDescription = "Open player",
+                            )
+                        }
                     }
-                    IconButton(
-                        onClick = onNavigateToPlaylists,
-                        enabled = destination != PromenadeDestination.Playlists,
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.QueueMusic,
-                            contentDescription = "Open playlists",
-                        )
+                    if (destination != PromenadeDestination.Playlists) {
+                        IconButton(onClick = onNavigateToPlaylists) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+                                contentDescription = "Open playlists",
+                            )
+                        }
                     }
-                    IconButton(
-                        onClick = onNavigateToSettings,
-                        enabled = destination != PromenadeDestination.Settings,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Settings,
-                            contentDescription = "Open settings",
-                        )
+                    if (destination != PromenadeDestination.Instructions) {
+                        IconButton(onClick = onNavigateToInstructions) {
+                            Icon(
+                                imageVector = Icons.Filled.Description,
+                                contentDescription = "Open instructions",
+                            )
+                        }
+                    }
+                    if (destination != PromenadeDestination.Diagnostics) {
+                        IconButton(onClick = onNavigateToDiagnostics) {
+                            BadgedBox(
+                                badge = {
+                                    if (library.diagnostics.isNotEmpty()) {
+                                        Badge {
+                                            Text(text = library.diagnostics.size.coerceAtMost(99).toString())
+                                        }
+                                    }
+                                },
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Warning,
+                                    contentDescription = diagnosticsContentDescription(library.diagnostics.size),
+                                    tint = if (library.diagnostics.isEmpty()) {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    } else {
+                                        MaterialTheme.colorScheme.error
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    if (destination != PromenadeDestination.Settings) {
+                        IconButton(onClick = onNavigateToSettings) {
+                            Icon(
+                                imageVector = Icons.Filled.Settings,
+                                contentDescription = "Open settings",
+                            )
+                        }
                     }
                     IconButton(
                         onClick = onRescan,
@@ -400,9 +466,11 @@ private fun PromenadeScreen(
                     playerContent(
                         library = library,
                         activePlaylist = activePlaylist,
+                        currentTrack = currentTrack,
                         playback = playback,
                         preferences = preferences,
                         onNavigateToSettings = onNavigateToSettings,
+                        onNavigateToInstructions = onNavigateToInstructions,
                         onLoadPlaylistEntry = onLoadPlaylistEntry,
                         onLoadTrack = onLoadTrack,
                         onAddTrackToPlaylist = onAddTrackToPlaylist,
@@ -447,6 +515,16 @@ private fun PromenadeScreen(
                     }
                     diagnosticsContent(library.diagnostics)
                 }
+
+                PromenadeDestination.Instructions -> {
+                    item {
+                        InstructionsScreen(currentTrack = currentTrack)
+                    }
+                }
+
+                PromenadeDestination.Diagnostics -> {
+                    diagnosticsScreenContent(library.diagnostics)
+                }
             }
         }
     }
@@ -455,9 +533,11 @@ private fun PromenadeScreen(
 private fun androidx.compose.foundation.lazy.LazyListScope.playerContent(
     library: LibraryState,
     activePlaylist: ResolvedPlaylist?,
+    currentTrack: Track?,
     playback: PlaybackSnapshot,
     preferences: AppPreferences,
     onNavigateToSettings: () -> Unit,
+    onNavigateToInstructions: () -> Unit,
     onLoadPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
     onLoadTrack: (Track) -> Unit,
     onAddTrackToPlaylist: (Playlist, Track) -> Unit,
@@ -481,7 +561,11 @@ private fun androidx.compose.foundation.lazy.LazyListScope.playerContent(
     }
 
     item {
-        PlayerSummary(snapshot = playback)
+        CurrentTrackPanel(
+            track = currentTrack,
+            snapshot = playback,
+            onNavigateToInstructions = onNavigateToInstructions,
+        )
     }
 
     item {
@@ -651,9 +735,14 @@ private fun PlaylistPickerRow(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(
+                onClickLabel = "Select playlist",
                 onClick = { onSelectPlaylist(playlist) },
+                onLongClickLabel = "Edit playlist",
                 onLongClick = { onEditPlaylist(playlist) },
-            ),
+            )
+            .semantics {
+                contentDescription = "Playlist ${playlist.playlist.name}. Tap to select. Long press to edit."
+            },
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -748,8 +837,16 @@ private fun PlaylistEntryRow(
             .fillMaxWidth()
             .clickable(
                 enabled = entry.track != null,
+                onClickLabel = "Load playlist entry paused",
                 onClick = onLoadPlaylistEntry,
-            ),
+            )
+            .semantics {
+                contentDescription = if (entry.track == null) {
+                    "Missing playlist entry ${entry.trackId.jsonFileName}"
+                } else {
+                    "Load ${entry.track.name} paused"
+                }
+            },
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -910,6 +1007,37 @@ private fun androidx.compose.foundation.lazy.LazyListScope.diagnosticsContent(
     }
 }
 
+private fun androidx.compose.foundation.lazy.LazyListScope.diagnosticsScreenContent(
+    diagnostics: List<LibraryDiagnostic>,
+) {
+    item {
+        SectionHeader(
+            title = "Diagnostics",
+            supportingText = if (diagnostics.isEmpty()) {
+                "No library or playback issues."
+            } else {
+                "${diagnostics.size} issue${if (diagnostics.size == 1) "" else "s"} found."
+            },
+        )
+    }
+    if (diagnostics.isEmpty()) {
+        item {
+            Text(
+                text = "Everything scanned cleanly.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    } else {
+        items(
+            items = diagnostics.withIndex().toList(),
+            key = { indexedDiagnostic -> "${indexedDiagnostic.index}:${indexedDiagnostic.value.displayText()}" },
+        ) { indexedDiagnostic ->
+            DiagnosticRow(diagnostic = indexedDiagnostic.value)
+        }
+    }
+}
+
 @Composable
 private fun FolderRepairBanner(
     library: LibraryState,
@@ -1010,19 +1138,118 @@ private fun FolderRow(
 }
 
 @Composable
-private fun PlayerSummary(snapshot: PlaybackSnapshot) {
+private fun CurrentTrackPanel(
+    track: Track?,
+    snapshot: PlaybackSnapshot,
+    onNavigateToInstructions: () -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         SectionHeader(
-            title = "Now Playing",
+            title = "Current Track",
             supportingText = if (snapshot.isConnected) snapshot.status else "Connecting to playback service",
         )
         Text(
-            text = snapshot.title,
+            text = track?.name ?: snapshot.title,
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.SemiBold,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
+        if (track != null) {
+            Text(
+                text = track.trackSummary(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            OutlinedButton(
+                onClick = onNavigateToInstructions,
+                enabled = track.instructionsRef != null,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Description,
+                    contentDescription = null,
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(text = "Instructions")
+            }
+        }
+    }
+}
+
+@Composable
+private fun InstructionsScreen(currentTrack: Track?) {
+    val context = LocalContext.current
+    var instructionText by remember(currentTrack?.id) {
+        mutableStateOf<String?>(null)
+    }
+    var instructionError by remember(currentTrack?.id) {
+        mutableStateOf<String?>(null)
+    }
+    val instructionsUri = currentTrack?.instructionsRef?.uriString
+
+    LaunchedEffect(instructionsUri) {
+        instructionText = null
+        instructionError = null
+        if (instructionsUri != null) {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(instructionsUri.toUri())
+                        ?.bufferedReader()
+                        ?.use { reader -> reader.readText() }
+                }
+            }
+            instructionText = result.getOrNull()
+            instructionError = result.exceptionOrNull()?.message
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionHeader(
+            title = currentTrack?.name ?: "No track loaded",
+            supportingText = currentTrack?.instructionsRef?.displayName ?: "Load a track with instructions.",
+        )
+        when {
+            currentTrack == null -> {
+                Text(
+                    text = "Load a track to view its instructions.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            currentTrack.instructionsRef == null -> {
+                Text(
+                    text = "This track does not include an instructions file.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            instructionError != null -> {
+                Text(
+                    text = "Could not load instructions: $instructionError",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+
+            instructionText == null -> {
+                Text(
+                    text = "Loading instructions...",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            else -> {
+                Text(
+                    text = instructionText.orEmpty(),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
     }
 }
 
@@ -1223,7 +1450,13 @@ private fun TrackRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onLoadTrack(track) },
+            .clickable(
+                onClickLabel = "Load track paused",
+                onClick = { onLoadTrack(track) },
+            )
+            .semantics {
+                contentDescription = "Load track ${track.name} paused"
+            },
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1285,6 +1518,37 @@ private fun DiagnosticsSection(diagnostics: List<LibraryDiagnostic>) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+@Composable
+private fun DiagnosticRow(diagnostic: LibraryDiagnostic) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = when (diagnostic.severity) {
+                Severity.Error -> "Error"
+                Severity.Warning -> "Warning"
+            },
+            style = MaterialTheme.typography.labelLarge,
+            color = if (diagnostic.severity == Severity.Error) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+        diagnostic.fileName?.let { fileName ->
+            Text(
+                text = fileName,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Text(
+            text = diagnostic.message,
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }
 
@@ -1354,6 +1618,13 @@ private fun LibraryDiagnostic.displayText(): String {
     val file = fileName?.let { " [$it]" }.orEmpty()
     return "$prefix$file: $message"
 }
+
+private fun diagnosticsContentDescription(count: Int): String =
+    if (count == 0) {
+        "Open diagnostics. No issues."
+    } else {
+        "Open diagnostics. $count issue${if (count == 1) "" else "s"}."
+    }
 
 private fun formatDuration(milliseconds: Long): String {
     val totalSeconds = (milliseconds / 1_000L).coerceAtLeast(0L)
