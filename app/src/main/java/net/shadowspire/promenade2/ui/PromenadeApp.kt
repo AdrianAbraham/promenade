@@ -14,10 +14,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -35,6 +41,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -46,13 +53,19 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import net.shadowspire.promenade2.core.model.AutoMuteSettings
+import net.shadowspire.promenade2.core.model.Playlist
+import net.shadowspire.promenade2.core.model.PlaylistId
+import net.shadowspire.promenade2.core.model.PlaybackSettings
 import net.shadowspire.promenade2.core.model.Track
 import net.shadowspire.promenade2.data.diagnostics.LibraryDiagnostic
 import net.shadowspire.promenade2.data.diagnostics.Severity
 import net.shadowspire.promenade2.data.library.FolderSummary
 import net.shadowspire.promenade2.data.library.LibraryState
+import net.shadowspire.promenade2.data.playlist.PlaylistEntryResolution
+import net.shadowspire.promenade2.data.playlist.ResolvedPlaylist
+import net.shadowspire.promenade2.data.preferences.AppPreferences
 import net.shadowspire.promenade2.playback.PlaybackSnapshot
 import net.shadowspire.promenade2.playback.PromenadeControllerConnection
 
@@ -70,6 +83,11 @@ fun PromenadeApp() {
             }
             val playback by connection.snapshot.collectAsStateWithLifecycle()
             val library by appState.libraryState.collectAsStateWithLifecycle()
+            val preferences by appState.preferencesState.collectAsStateWithLifecycle()
+            val activePlaylistId by appState.activePlaylistId.collectAsStateWithLifecycle()
+            val activePlaylist = library.playlists.firstOrNull { playlist ->
+                playlist.playlist.id == activePlaylistId
+            }
             val tracksFolderPicker = rememberLauncherForActivityResult(
                 ActivityResultContracts.OpenDocumentTree(),
             ) { uri ->
@@ -94,17 +112,88 @@ fun PromenadeApp() {
                 }
             }
 
+            LaunchedEffect(playback.isConnected, preferences.playbackSettings) {
+                if (playback.isConnected) {
+                    connection.setBalance(preferences.playbackSettings.balance)
+                    connection.setCallsMuted(preferences.playbackSettings.callsMuted)
+                    connection.setAutoMute(preferences.playbackSettings.autoMute)
+                    connection.setPlaybackDelay(preferences.playbackSettings.playbackDelay)
+                }
+            }
+
             PromenadeScreen(
                 playback = playback,
                 library = library,
+                preferences = preferences,
+                activePlaylist = activePlaylist,
                 onChooseTracksFolder = { tracksFolderPicker.launch(null) },
                 onChoosePlaylistsFolder = { playlistsFolderPicker.launch(null) },
                 onRescan = appState::rescan,
-                onPlayTrack = { track -> connection.loadAndPlay(track.musicRef.uriString.toUri()) },
+                onCreatePlaylist = appState::createPlaylist,
+                onSelectPlaylist = appState::selectPlaylist,
+                onDeletePlaylist = appState::deletePlaylist,
+                onLoadPlaylist = { playlist ->
+                    val resolvedTracks = playlist.resolvedTracks
+                    if (resolvedTracks.isNotEmpty()) {
+                        connection.loadQueue(resolvedTracks, startIndex = 0, autoplay = false)
+                    }
+                },
+                onPlayPlaylistEntry = { playlist, entry ->
+                    val track = entry.track
+                    if (track != null) {
+                        val resolvedIndex = playlist.entries
+                            .take(entry.index + 1)
+                            .count { playlistEntry -> playlistEntry.track != null } - 1
+                        connection.loadQueue(playlist.resolvedTracks, resolvedIndex.coerceAtLeast(0), autoplay = true)
+                    }
+                },
+                onAddTrackToPlaylist = { playlist, track ->
+                    appState.addTrackToPlaylist(playlist, track)
+                },
+                onRemovePlaylistEntry = appState::removePlaylistEntry,
+                onMovePlaylistEntry = appState::movePlaylistEntry,
+                onPlayTrack = { track ->
+                    val index = library.tracks.indexOf(track)
+                    if (index >= 0) {
+                        connection.setCallsMuted(false)
+                        appState.updatePreferences { current ->
+                            current.copy(
+                                playbackSettings = current.playbackSettings.copy(callsMuted = false),
+                            )
+                        }
+                        connection.loadQueue(library.tracks, index, autoplay = true)
+                    }
+                },
                 onPlay = connection::play,
                 onPause = connection::pause,
                 onStop = connection::stop,
                 onSeek = connection::seekTo,
+                onPrevious = connection::skipPrevious,
+                onNext = connection::skipNext,
+                onSetBalance = { balance ->
+                    connection.setBalance(balance)
+                    appState.updatePreferences { current ->
+                        current.copy(
+                            playbackSettings = current.playbackSettings.copy(balance = balance),
+                        )
+                    }
+                },
+                onSetCallsMuted = { muted ->
+                    connection.setCallsMuted(muted)
+                    appState.updatePreferences { current ->
+                        current.copy(
+                            playbackSettings = current.playbackSettings.copy(callsMuted = muted),
+                        )
+                    }
+                },
+                onSetAutoMute = { autoMute ->
+                    connection.setAutoMute(autoMute)
+                    appState.updatePreferences { current ->
+                        current.copy(
+                            playbackSettings = current.playbackSettings.copy(autoMute = autoMute),
+                        )
+                    }
+                },
             )
         }
     }
@@ -115,14 +204,29 @@ fun PromenadeApp() {
 private fun PromenadeScreen(
     playback: PlaybackSnapshot,
     library: LibraryState,
+    preferences: AppPreferences,
+    activePlaylist: ResolvedPlaylist?,
     onChooseTracksFolder: () -> Unit,
     onChoosePlaylistsFolder: () -> Unit,
     onRescan: () -> Unit,
+    onCreatePlaylist: () -> Unit,
+    onSelectPlaylist: (PlaylistId?) -> Unit,
+    onDeletePlaylist: (PlaylistId) -> Unit,
+    onLoadPlaylist: (ResolvedPlaylist) -> Unit,
+    onPlayPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
+    onAddTrackToPlaylist: (Playlist, Track) -> Unit,
+    onRemovePlaylistEntry: (Playlist, Int) -> Unit,
+    onMovePlaylistEntry: (Playlist, Int, Int) -> Unit,
     onPlayTrack: (Track) -> Unit,
     onPlay: () -> Unit,
     onPause: () -> Unit,
     onStop: () -> Unit,
     onSeek: (Long) -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onSetBalance: (Float) -> Unit,
+    onSetCallsMuted: (Boolean) -> Unit,
+    onSetAutoMute: (AutoMuteSettings) -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -162,6 +266,21 @@ private fun PromenadeScreen(
             }
 
             item {
+                PlaylistSection(
+                    library = library,
+                    activePlaylist = activePlaylist,
+                    playback = playback,
+                    onCreatePlaylist = onCreatePlaylist,
+                    onSelectPlaylist = onSelectPlaylist,
+                    onDeletePlaylist = onDeletePlaylist,
+                    onLoadPlaylist = onLoadPlaylist,
+                    onPlayPlaylistEntry = onPlayPlaylistEntry,
+                    onRemovePlaylistEntry = onRemovePlaylistEntry,
+                    onMovePlaylistEntry = onMovePlaylistEntry,
+                )
+            }
+
+            item {
                 PlayerSummary(snapshot = playback)
             }
 
@@ -178,6 +297,18 @@ private fun PromenadeScreen(
                     onPlay = onPlay,
                     onPause = onPause,
                     onStop = onStop,
+                    onPrevious = onPrevious,
+                    onNext = onNext,
+                )
+            }
+
+            item {
+                PracticeControls(
+                    playback = playback,
+                    settings = preferences.playbackSettings,
+                    onSetBalance = onSetBalance,
+                    onSetCallsMuted = onSetCallsMuted,
+                    onSetAutoMute = onSetAutoMute,
                 )
             }
 
@@ -202,12 +333,15 @@ private fun PromenadeScreen(
                 }
             } else {
                 items(
-                    items = library.tracks,
-                    key = { track -> track.id.jsonFileName },
-                ) { track ->
+                    items = library.tracks.withIndex().toList(),
+                    key = { indexedTrack -> indexedTrack.value.id.jsonFileName },
+                ) { indexedTrack ->
                     TrackRow(
-                        track = track,
+                        track = indexedTrack.value,
+                        isCurrent = playback.currentIndex == indexedTrack.index,
+                        activePlaylist = activePlaylist?.playlist,
                         onPlayTrack = onPlayTrack,
+                        onAddTrackToPlaylist = onAddTrackToPlaylist,
                     )
                 }
             }
@@ -217,6 +351,225 @@ private fun PromenadeScreen(
                     DiagnosticsSection(diagnostics = library.diagnostics)
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistSection(
+    library: LibraryState,
+    activePlaylist: ResolvedPlaylist?,
+    playback: PlaybackSnapshot,
+    onCreatePlaylist: () -> Unit,
+    onSelectPlaylist: (PlaylistId?) -> Unit,
+    onDeletePlaylist: (PlaylistId) -> Unit,
+    onLoadPlaylist: (ResolvedPlaylist) -> Unit,
+    onPlayPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
+    onRemovePlaylistEntry: (Playlist, Int) -> Unit,
+    onMovePlaylistEntry: (Playlist, Int, Int) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SectionHeader(
+            title = "Playlists",
+            supportingText = if (library.playlistsFolder?.available == true) {
+                "${library.playlists.size} playlist${if (library.playlists.size == 1) "" else "s"}"
+            } else {
+                "Choose a playlists folder to create and edit playlists."
+            },
+        )
+        Button(
+            onClick = onCreatePlaylist,
+            enabled = library.playlistsFolder?.available == true,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Add,
+                contentDescription = null,
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(text = "New playlist")
+        }
+        library.playlists.forEach { playlist ->
+            PlaylistRow(
+                playlist = playlist,
+                isActive = activePlaylist?.playlist?.id == playlist.playlist.id,
+                onSelectPlaylist = onSelectPlaylist,
+                onDeletePlaylist = onDeletePlaylist,
+            )
+        }
+        if (activePlaylist != null) {
+            ActivePlaylistEditor(
+                playlist = activePlaylist,
+                playback = playback,
+                onLoadPlaylist = onLoadPlaylist,
+                onPlayPlaylistEntry = onPlayPlaylistEntry,
+                onRemovePlaylistEntry = onRemovePlaylistEntry,
+                onMovePlaylistEntry = onMovePlaylistEntry,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlaylistRow(
+    playlist: ResolvedPlaylist,
+    isActive: Boolean,
+    onSelectPlaylist: (PlaylistId?) -> Unit,
+    onDeletePlaylist: (PlaylistId) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = if (isActive) "Editing: ${playlist.playlist.name}" else playlist.playlist.name,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "${playlist.entries.size} entries, ${playlist.unresolvedCount} unresolved",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        TextButton(onClick = { onSelectPlaylist(playlist.playlist.id) }) {
+            Text(text = if (isActive) "Selected" else "Edit")
+        }
+        IconButton(onClick = { onDeletePlaylist(playlist.playlist.id) }) {
+            Icon(
+                imageVector = Icons.Filled.Delete,
+                contentDescription = "Delete ${playlist.playlist.name}",
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActivePlaylistEditor(
+    playlist: ResolvedPlaylist,
+    playback: PlaybackSnapshot,
+    onLoadPlaylist: (ResolvedPlaylist) -> Unit,
+    onPlayPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
+    onRemovePlaylistEntry: (Playlist, Int) -> Unit,
+    onMovePlaylistEntry: (Playlist, Int, Int) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SectionHeader(
+                title = playlist.playlist.name,
+                supportingText = "Duplicate and unresolved entries are preserved.",
+            )
+            OutlinedButton(
+                onClick = { onLoadPlaylist(playlist) },
+                enabled = playlist.resolvedTracks.isNotEmpty(),
+            ) {
+                Text(text = "Load")
+            }
+        }
+        if (playlist.entries.isEmpty()) {
+            Text(
+                text = "Add tracks from the track list below.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            playlist.entries.forEach { entry ->
+                PlaylistEntryRow(
+                    playlist = playlist.playlist,
+                    entry = entry,
+                    isCurrent = playback.currentIndex == resolvedIndexFor(playlist, entry),
+                    onPlayPlaylistEntry = { onPlayPlaylistEntry(playlist, entry) },
+                    onRemovePlaylistEntry = onRemovePlaylistEntry,
+                    onMovePlaylistEntry = onMovePlaylistEntry,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistEntryRow(
+    playlist: Playlist,
+    entry: PlaylistEntryResolution,
+    isCurrent: Boolean,
+    onPlayPlaylistEntry: () -> Unit,
+    onRemovePlaylistEntry: (Playlist, Int) -> Unit,
+    onMovePlaylistEntry: (Playlist, Int, Int) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = when {
+                    entry.track != null && isCurrent -> "Now: ${entry.track.name}"
+                    entry.track != null -> entry.track.name
+                    else -> "Missing: ${entry.trackId.jsonFileName}"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (entry.track == null) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "Entry ${entry.index + 1}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        IconButton(
+            onClick = { onMovePlaylistEntry(playlist, entry.index, entry.index - 1) },
+            enabled = entry.index > 0,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowUp,
+                contentDescription = "Move entry up",
+            )
+        }
+        IconButton(
+            onClick = { onMovePlaylistEntry(playlist, entry.index, entry.index + 1) },
+            enabled = entry.index < playlist.entries.lastIndex,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowDown,
+                contentDescription = "Move entry down",
+            )
+        }
+        IconButton(
+            onClick = onPlayPlaylistEntry,
+            enabled = entry.track != null,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.PlayArrow,
+                contentDescription = "Play playlist entry",
+            )
+        }
+        IconButton(onClick = { onRemovePlaylistEntry(playlist, entry.index) }) {
+            Icon(
+                imageVector = Icons.Filled.Delete,
+                contentDescription = "Remove playlist entry",
+            )
         }
     }
 }
@@ -359,6 +712,8 @@ private fun PlaybackControls(
     onPlay: () -> Unit,
     onPause: () -> Unit,
     onStop: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -366,12 +721,32 @@ private fun PlaybackControls(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(
+            onClick = onPrevious,
+            enabled = snapshot.canPlay,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.SkipPrevious,
+                contentDescription = "Previous track",
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        IconButton(
             onClick = if (snapshot.isPlaying) onPause else onPlay,
             enabled = snapshot.canPlay,
         ) {
             Icon(
                 imageVector = if (snapshot.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                 contentDescription = if (snapshot.isPlaying) "Pause" else "Play",
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        IconButton(
+            onClick = onNext,
+            enabled = snapshot.canPlay,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.SkipNext,
+                contentDescription = "Next track",
             )
         }
         Spacer(modifier = Modifier.width(12.dp))
@@ -388,9 +763,102 @@ private fun PlaybackControls(
 }
 
 @Composable
+private fun PracticeControls(
+    playback: PlaybackSnapshot,
+    settings: PlaybackSettings,
+    onSetBalance: (Float) -> Unit,
+    onSetCallsMuted: (Boolean) -> Unit,
+    onSetAutoMute: (AutoMuteSettings) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SectionHeader(
+            title = "Practice",
+            supportingText = playback.practiceStatus(),
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "Music / calls balance",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Slider(
+                value = settings.balance,
+                onValueChange = onSetBalance,
+                valueRange = 0f..1f,
+                modifier = Modifier.semantics {
+                    contentDescription = "Music calls balance"
+                },
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(text = "Music")
+                Text(text = "Calls")
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Button(
+                onClick = { onSetCallsMuted(!settings.callsMuted) },
+                enabled = playback.hasCalls || settings.callsMuted,
+            ) {
+                Text(text = if (settings.callsMuted) "Unmute calls" else "Mute calls")
+            }
+        }
+        AutoMuteControls(
+            settings = settings.autoMute,
+            onSetAutoMute = onSetAutoMute,
+        )
+    }
+}
+
+@Composable
+private fun AutoMuteControls(
+    settings: AutoMuteSettings,
+    onSetAutoMute: (AutoMuteSettings) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Auto-mute",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedButton(
+                onClick = { onSetAutoMute(AutoMuteSettings()) },
+                enabled = settings.isEnabled,
+            ) {
+                Text(text = "Off")
+            }
+            OutlinedButton(
+                onClick = { onSetAutoMute(AutoMuteSettings(muteAfterRepetition = 2)) },
+                enabled = settings.muteAfterRepetition != 2,
+            ) {
+                Text(text = "After 2")
+            }
+            OutlinedButton(
+                onClick = { onSetAutoMute(AutoMuteSettings(muteWithRepetitionsRemaining = 1)) },
+                enabled = settings.muteWithRepetitionsRemaining != 1,
+            ) {
+                Text(text = "Last rep")
+            }
+        }
+    }
+}
+
+@Composable
 private fun TrackRow(
     track: Track,
+    isCurrent: Boolean,
+    activePlaylist: Playlist?,
     onPlayTrack: (Track) -> Unit,
+    onAddTrackToPlaylist: (Playlist, Track) -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -402,7 +870,7 @@ private fun TrackRow(
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             Text(
-                text = track.name,
+                text = if (isCurrent) "Now: ${track.name}" else track.name,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
@@ -417,6 +885,16 @@ private fun TrackRow(
             )
         }
         Spacer(modifier = Modifier.width(12.dp))
+        if (activePlaylist != null) {
+            TextButton(onClick = { onAddTrackToPlaylist(activePlaylist, track) }) {
+                Icon(
+                    imageVector = Icons.Filled.Add,
+                    contentDescription = null,
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(text = "Add")
+            }
+        }
         TextButton(onClick = { onPlayTrack(track) }) {
             Icon(
                 imageVector = Icons.Filled.PlayArrow,
@@ -484,7 +962,34 @@ private fun FolderSummary?.statusText(): String =
 
 private fun Track.trackSummary(): String {
     val calls = if (callsRef == null) "music only" else "music + calls"
-    return "$intro · ${repetitions.size} repetition${if (repetitions.size == 1) "" else "s"} · $calls"
+    return "$intro - ${repetitions.size} repetition${if (repetitions.size == 1) "" else "s"} - $calls"
+}
+
+private fun resolvedIndexFor(
+    playlist: ResolvedPlaylist,
+    entry: PlaylistEntryResolution,
+): Int? {
+    if (entry.track == null) {
+        return null
+    }
+    return playlist.entries
+        .take(entry.index + 1)
+        .count { playlistEntry -> playlistEntry.track != null } - 1
+}
+
+private fun PlaybackSnapshot.practiceStatus(): String {
+    val queueText = if (currentIndex == null || queueSize == 0) {
+        "No queue"
+    } else {
+        "Track ${currentIndex + 1} of $queueSize"
+    }
+    val repetitionText = if (totalRepetitions == 0) {
+        "no repetitions"
+    } else {
+        "rep $currentRepetition of $totalRepetitions"
+    }
+    val callsText = if (hasCalls) "calls available" else "music only"
+    return "$queueText - $repetitionText - $callsText"
 }
 
 private fun LibraryDiagnostic.displayText(): String {

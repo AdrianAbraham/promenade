@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.database.Cursor
 import android.net.Uri
+import android.os.Bundle
 import android.provider.OpenableColumns
 import androidx.core.content.ContextCompat
 import androidx.media3.common.C
@@ -23,6 +24,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import net.shadowspire.promenade2.core.model.AutoMuteSettings
+import net.shadowspire.promenade2.core.model.PlaybackDelaySettings
+import net.shadowspire.promenade2.core.model.Track
+import net.shadowspire.promenade2.domain.playlist.PracticeQueueBuilder
 
 class PromenadeControllerConnection(context: Context) {
     private val appContext = context.applicationContext
@@ -95,6 +100,29 @@ class PromenadeControllerConnection(context: Context) {
         }
     }
 
+    fun loadQueue(
+        tracks: List<Track>,
+        startIndex: Int,
+        autoplay: Boolean,
+    ) {
+        if (tracks.isEmpty()) {
+            return
+        }
+
+        val mediaItems = PracticeQueueBuilder.build(tracks)
+        val boundedIndex = startIndex.coerceIn(0, mediaItems.lastIndex)
+        controller?.run {
+            setMediaItems(mediaItems, boundedIndex, C.TIME_UNSET)
+            prepare()
+            if (autoplay) {
+                play()
+            } else {
+                pause()
+            }
+            updateFrom(this)
+        }
+    }
+
     fun play() {
         controller?.play()
     }
@@ -115,6 +143,56 @@ class PromenadeControllerConnection(context: Context) {
         controller?.seekTo(positionMs.coerceAtLeast(0L))
     }
 
+    fun skipPrevious() {
+        controller?.run {
+            if (hasPreviousMediaItem()) {
+                seekToPreviousMediaItem()
+            } else {
+                seekTo(0L)
+            }
+        }
+    }
+
+    fun skipNext() {
+        controller?.run {
+            if (hasNextMediaItem()) {
+                seekToNextMediaItem()
+            }
+        }
+    }
+
+    fun setBalance(balance: Float) {
+        val args = Bundle().apply {
+            putFloat(PracticeSessionCommands.Balance, balance.coerceIn(0f, 1f))
+        }
+        controller?.sendCustomCommand(PracticeSessionCommands.BalanceCommand, args)
+    }
+
+    fun setCallsMuted(muted: Boolean) {
+        val args = Bundle().apply {
+            putBoolean(PracticeSessionCommands.CallsMuted, muted)
+        }
+        controller?.sendCustomCommand(PracticeSessionCommands.CallsMutedCommand, args)
+    }
+
+    fun setAutoMute(settings: AutoMuteSettings) {
+        val args = Bundle().apply {
+            putInt(PracticeSessionCommands.MuteAfterRepetition, settings.muteAfterRepetition ?: 0)
+            putInt(
+                PracticeSessionCommands.MuteWithRepetitionsRemaining,
+                settings.muteWithRepetitionsRemaining ?: 0,
+            )
+        }
+        controller?.sendCustomCommand(PracticeSessionCommands.AutoMuteCommand, args)
+    }
+
+    fun setPlaybackDelay(settings: PlaybackDelaySettings) {
+        val args = Bundle().apply {
+            putInt(PracticeSessionCommands.PlaybackDelaySeconds, settings.delaySeconds.coerceAtLeast(0))
+        }
+        controller?.sendCustomCommand(PracticeSessionCommands.PlaybackDelayCommand, args)
+    }
+
     private fun startProgressUpdates() {
         progressJob?.cancel()
         progressJob = scope.launch {
@@ -128,6 +206,9 @@ class PromenadeControllerConnection(context: Context) {
     private fun updateFrom(player: Player) {
         val durationMs = player.duration.takeIf { it != C.TIME_UNSET }?.coerceAtLeast(0L) ?: 0L
         val positionMs = player.currentPosition.coerceAtLeast(0L)
+        val extras = player.currentMediaItem?.mediaMetadata?.extras
+        val repetitionStarts = extras?.getDoubleArray(PracticeMediaMetadata.RepetitionStarts) ?: DoubleArray(0)
+        val currentIndex = player.currentMediaItemIndex.takeIf { index -> index != C.INDEX_UNSET }
         val title = player.mediaMetadata.title?.toString()
             ?: player.currentMediaItem?.mediaMetadata?.title?.toString()
             ?: "No audio selected"
@@ -138,10 +219,28 @@ class PromenadeControllerConnection(context: Context) {
             status = player.playbackStatus(),
             isPlaying = player.isPlaying,
             canPlay = player.mediaItemCount > 0,
+            currentIndex = currentIndex,
+            queueSize = player.mediaItemCount,
             positionMs = positionMs.coerceAtMost(durationMs.takeIf { it > 0L } ?: positionMs),
             durationMs = durationMs,
             bufferedPercentage = player.bufferedPercentage.coerceIn(0, 100),
+            currentRepetition = currentRepetition(positionMs, repetitionStarts),
+            totalRepetitions = repetitionStarts.size,
+            hasCalls = !extras?.getString(PracticeMediaMetadata.CallsUri).isNullOrBlank(),
         )
+    }
+
+    private fun currentRepetition(
+        positionMs: Long,
+        repetitionStarts: DoubleArray,
+    ): Int {
+        if (repetitionStarts.isEmpty()) {
+            return 0
+        }
+
+        val positionSeconds = positionMs / MILLIS_PER_SECOND
+        val index = repetitionStarts.indexOfLast { start -> start <= positionSeconds }
+        return if (index < 0) 0 else index + 1
     }
 
     private fun Player.playbackStatus(): String =
@@ -167,5 +266,6 @@ class PromenadeControllerConnection(context: Context) {
 
     private companion object {
         const val PROGRESS_UPDATE_MS = 250L
+        const val MILLIS_PER_SECOND = 1_000.0
     }
 }

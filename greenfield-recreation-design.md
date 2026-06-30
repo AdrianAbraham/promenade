@@ -23,7 +23,7 @@ References checked for this design:
 
 Promenade 2 is a local-first practice player. Users choose a tracks folder containing track JSON, audio, optional calls audio, and optional instruction files. Users also choose or create a separate playlists folder where Promenade 2 stores playlist JSON. The app scans the tracks folder, resolves playlist entries, lets the user edit playlists, and plays tracks with synchronized music and calls audio.
 
-The UI should feel similar to the old app: a compact player-first screen with playlist selection, active playlist rows, current track details, repetition status, transport controls, balance, calls mute, and auto-mute settings. The implementation can change anything necessary to make this a better Android media app.
+The UI should feel similar to the old app: a compact player-first screen with active playlist rows, current track details, repetition status, transport controls, balance, calls mute, and auto-mute settings. Playlist selection happens through a dedicated Playlists screen, and folder selection happens through a dedicated Settings screen. Track rows load tracks without starting playback; playback starts only from the transport play control or external media play command. The implementation can change anything necessary to make this a better Android media app.
 
 ## Platform Decisions
 
@@ -216,7 +216,7 @@ app/src/main/java/net/shadowspire/promenade2/
     navigation/
     player/
     playlists/
-    folders/
+    settings/
     instructions/
     diagnostics/
     components/
@@ -316,6 +316,7 @@ Playback is service-first.
 - Media3 `MediaSession`.
 - Media3-compatible player exposed to the session.
 - Foreground media notification through Media3.
+- Notification/session activity `PendingIntent` that opens `MainActivity` when the user taps the media banner in the notification shade.
 - Audio focus and noisy-output handling through Media3/player integration.
 - Media button handling.
 - Playback resumption callback.
@@ -370,7 +371,8 @@ This keeps Media3 session integration correct from the beginning while isolating
 ### Playback Semantics
 
 - Selecting a playlist builds a queue and loads the first resolved track without autoplay.
-- Selecting a row loads that queue index without autoplay.
+- Selecting a track row loads that queue index without autoplay.
+- Track rows do not include separate Play buttons.
 - Pressing play starts or resumes through the Media3 session.
 - Track completion advances to the next resolved playlist entry and pauses there.
 - Bluetooth/lock-screen next and previous obey playlist bounds.
@@ -404,19 +406,21 @@ Promenade 2 remains a compact practice tool. It should be fast under one thumb, 
 Top-level destinations:
 
 - Player.
-- Playlist editor.
-- Folder setup.
+- Playlists.
+- Settings.
 - Instructions.
 - Diagnostics.
 
-The first launch opens folder setup until both tracks and playlists folders are valid.
+The first launch opens Settings until both tracks and playlists folders are valid.
 
 ### Player Screen
 
 Keep the old app's rough structure:
 
-- Top app bar with folder status, playlist selector, edit action, diagnostics action.
+- Top app bar with Settings, Playlists, Instructions, and Diagnostics actions.
 - Active playlist rows with current row highlight.
+- Tapping a track row loads that track paused; it never starts playback by itself.
+- No per-track Play buttons appear in playlist rows or library rows.
 - Unresolved rows shown in-place with warning treatment and readable labels.
 - Current track panel with name, intro, calls availability, instructions action.
 - Repetition status.
@@ -428,9 +432,13 @@ Keep the old app's rough structure:
 
 The screen observes app state plus Media3 controller state. UI controls dispatch intents; they do not manipulate players directly.
 
-### Playlist Editor
+### Playlists Screen
 
+- Opens from a button on the Player screen.
 - Lists playlists from the playlists folder.
+- Provides a New playlist button.
+- Tapping a playlist selects it, builds its queue, loads the first resolved track paused, and returns to the player.
+- Long-pressing a playlist opens editing for that playlist.
 - Creates, deletes, and edits playlist files in the playlists folder.
 - Adds tracks from the scanned tracks folder.
 - Allows duplicates.
@@ -439,12 +447,14 @@ The screen observes app state plus Media3 controller state. UI controls dispatch
 
 Playlist rename is not in MVP unless needed to make create/edit usable.
 
-### Folder Setup
+### Settings
 
 - Tracks folder picker.
 - Playlists folder picker.
 - Folder health summary.
 - Rescan action.
+
+Folder controls stay out of the Player screen except for a compact invalid-folder warning that links to Settings.
 
 ### Instructions
 
@@ -526,9 +536,11 @@ Use fake Media3-facing adapters where practical and service smoke tests on devic
 
 Compose tests:
 
-- Folder setup incomplete state.
-- Folder setup complete state.
-- Playlist selection.
+- Settings incomplete-folder state.
+- Settings complete-folder state.
+- Playlists screen selection.
+- Playlists screen long-press edit entry.
+- New playlist action.
 - Current row highlight.
 - Unresolved playlist row.
 - Play/pause intent dispatch.
@@ -599,11 +611,28 @@ Goal: app-managed playlists stored separately from tracks.
 - Add add/remove/reorder entries.
 - Ensure completion advances to next resolved entry paused.
 
+### Phase 4.5: Navigation And Selection Corrections
+
+Goal: adjust the implemented player workflow before later UI polish builds on it.
+
+- Set the media session activity so tapping the notification-shade media banner opens `MainActivity`.
+- Move folder selection and repair controls into a separate Settings screen.
+- Keep only a compact invalid-folder warning on the Player screen, linking to Settings.
+- Remove per-track Play buttons from playlist rows and library rows.
+- Make track-row taps load the selected track paused without starting playback.
+- Add a Player screen button that opens a Playlists screen.
+- Add a New playlist action on the Playlists screen.
+- Make tapping a playlist select it, load its first resolved track paused, and return to Player.
+- Make long-pressing a playlist open editing for that playlist.
+- Add focused UI tests for Settings navigation, Playlists selection, New playlist, long-press edit, and track-row load-without-play behavior.
+
 ### Phase 5: Player UI Parity
 
 Goal: make the main UI feel like the old Promenade player while using the new backend.
 
 - Build compact player screen with playlist rows and current track panel.
+- Keep folder controls in Settings and playlist selection in the Playlists screen.
+- Ensure active playlist rows load paused on tap and expose no per-row Play buttons.
 - Add diagnostics indicator and diagnostics screen.
 - Add instructions screen.
 - Polish balance, calls mute, auto-mute controls.
@@ -617,6 +646,7 @@ Goal: make the app reliable enough to replace the old app.
 - Add device playback smoke-test checklist.
 - Add service lifecycle tests and manual verification notes.
 - Test background playback after screen off, app switch, and recents dismissal.
+- Test tapping the notification-shade media banner opens the app.
 - Test Bluetooth controls.
 - Test revoked folder permissions.
 - Test malformed JSON and missing files.
@@ -651,14 +681,21 @@ Promenade 2 is functionally complete when:
 - Playback continues in the background.
 - Bluetooth/media-button controls work.
 - Android lock-screen and notification media controls work.
+- Tapping the notification-shade media banner opens the app.
 - The Activity controls playback through a `MediaController`, not direct player ownership.
 - The app uses SAF-selected tracks and playlists folders.
 - Track assets and playlist files are stored separately.
+- Folder choices are managed in Settings, not inline on the Player screen.
 - No all-files storage permission is required.
 - Valid track JSON files appear in the library.
 - Missing optional calls and instructions produce warnings, not crashes.
 - Playlist JSON files preserve duplicate and unresolved entries.
 - Playlist edits write JSON to the playlists folder.
+- A Player screen button opens the Playlists screen.
+- The Playlists screen can create a new playlist.
+- Tapping a playlist selects it and loads its first resolved track paused.
+- Long-pressing a playlist opens editing.
+- Track rows load paused on tap and do not expose separate Play buttons.
 - Music and calls remain synchronized closely enough for practice use.
 - Balance, calls mute, and auto-mute behave correctly.
 - Count-in/playback delay works through app controls and system media controls.

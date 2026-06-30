@@ -6,7 +6,12 @@ data class PlaybackSnapshot(
     val status: String = "Choose an audio file to test service-backed playback.",
     val isPlaying: Boolean = false,
     val canPlay: Boolean = false,
+    val currentIndex: Int? = null,
+    val queueSize: Int = 0,
     val positionMs: Long = 0L,
     val durationMs: Long = 0L,
     val bufferedPercentage: Int = 0,
+    val currentRepetition: Int = 0,
+    val totalRepetitions: Int = 0,
+    val hasCalls: Boolean = false,
 )
