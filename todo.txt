@@ -1,0 +1,1 @@
+Media banner in notification pulldown should open app on tap
