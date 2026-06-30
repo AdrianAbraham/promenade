@@ -85,6 +85,21 @@ class PromenadeAppState(
         _activePlaylistId.value = playlistId
     }
 
+    fun saveLastPlaylistSelection(
+        playlistId: PlaylistId,
+        entryIndex: Int,
+    ) {
+        scope.launch {
+            preferencesRepository.setLastPlaylistSelection(playlistId, entryIndex)
+        }
+    }
+
+    fun saveLastTrackSelection(track: Track) {
+        scope.launch {
+            preferencesRepository.setLastTrackSelection(track.id)
+        }
+    }
+
     fun createPlaylist() {
         scope.launch {
             val playlist = libraryRepository.createPlaylist(
@@ -172,7 +187,13 @@ class PromenadeAppState(
             playlistsFolder = preferences.playlistsFolder,
         )
         val library = _libraryState.value
-        if (_activePlaylistId.value == null && library.playlists.isNotEmpty()) {
+        val preferredPlaylistId = preferences.lastPlaylistId
+        if (preferredPlaylistId != null && library.playlists.any { playlist ->
+                playlist.playlist.id == preferredPlaylistId
+            }
+        ) {
+            _activePlaylistId.value = preferredPlaylistId
+        } else if (_activePlaylistId.value == null && library.playlists.isNotEmpty()) {
             _activePlaylistId.value = library.playlists.first().playlist.id
         } else if (_activePlaylistId.value != null && library.playlists.none { playlist ->
                 playlist.playlist.id == _activePlaylistId.value

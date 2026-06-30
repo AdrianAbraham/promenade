@@ -1,5 +1,7 @@
 package net.shadowspire.promenade2.playback
 
+import android.app.PendingIntent
+import android.content.Intent
 import android.os.Bundle
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.common.util.UnstableApi
@@ -14,6 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import net.shadowspire.promenade2.MainActivity
 import net.shadowspire.promenade2.core.model.AutoMuteSettings
 import net.shadowspire.promenade2.core.model.PlaybackDelaySettings
 
@@ -37,9 +40,17 @@ class PromenadePlaybackService : MediaSessionService() {
         coordinator.attach()
         audioCoordinator = coordinator
 
+        val sessionActivity = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
         mediaSession = MediaSession.Builder(this, player)
             .setCallback(PracticeSessionCallback(coordinator))
             .setId(SESSION_ID)
+            .setSessionActivity(sessionActivity)
             .build()
     }
 

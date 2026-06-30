@@ -2,6 +2,9 @@ package net.shadowspire.promenade2.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FolderOpen
@@ -22,6 +26,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
@@ -43,8 +48,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -88,6 +96,19 @@ fun PromenadeApp() {
             val activePlaylist = library.playlists.firstOrNull { playlist ->
                 playlist.playlist.id == activePlaylistId
             }
+            var destinationName by rememberSaveable {
+                mutableStateOf(PromenadeDestination.Player.name)
+            }
+            var editingPlaylistFileName by rememberSaveable {
+                mutableStateOf<String?>(null)
+            }
+            val destination = PromenadeDestination.valueOf(destinationName)
+            val editingPlaylist = library.playlists.firstOrNull { playlist ->
+                playlist.playlist.id.fileName == editingPlaylistFileName
+            }
+            var restoredInitialSelection by rememberSaveable {
+                mutableStateOf(false)
+            }
             val tracksFolderPicker = rememberLauncherForActivityResult(
                 ActivityResultContracts.OpenDocumentTree(),
             ) { uri ->
@@ -121,30 +142,69 @@ fun PromenadeApp() {
                 }
             }
 
+            LaunchedEffect(
+                playback.isConnected,
+                library.isScanning,
+                library.playlists,
+                library.tracks,
+                preferences.lastPlaylistId,
+                preferences.lastPlaylistEntryIndex,
+                preferences.lastTrackId,
+            ) {
+                if (playback.isConnected && !library.isScanning && !restoredInitialSelection) {
+                    restoreLastLoadedSelection(
+                        preferences = preferences,
+                        library = library,
+                        connection = connection,
+                    )
+                    restoredInitialSelection = true
+                }
+            }
+
             PromenadeScreen(
+                destination = destination,
                 playback = playback,
                 library = library,
                 preferences = preferences,
                 activePlaylist = activePlaylist,
+                editingPlaylist = editingPlaylist,
+                onNavigateToPlayer = { destinationName = PromenadeDestination.Player.name },
+                onNavigateToPlaylists = { destinationName = PromenadeDestination.Playlists.name },
+                onNavigateToSettings = { destinationName = PromenadeDestination.Settings.name },
                 onChooseTracksFolder = { tracksFolderPicker.launch(null) },
                 onChoosePlaylistsFolder = { playlistsFolderPicker.launch(null) },
                 onRescan = appState::rescan,
                 onCreatePlaylist = appState::createPlaylist,
-                onSelectPlaylist = appState::selectPlaylist,
                 onDeletePlaylist = appState::deletePlaylist,
+                onSelectPlaylist = { playlist ->
+                    appState.selectPlaylist(playlist.playlist.id)
+                    appState.saveLastPlaylistSelection(playlist.playlist.id, entryIndex = 0)
+                    val resolvedTracks = playlist.resolvedTracks
+                    if (resolvedTracks.isNotEmpty()) {
+                        connection.loadQueue(resolvedTracks, startIndex = 0, autoplay = false)
+                    }
+                    destinationName = PromenadeDestination.Player.name
+                },
+                onEditPlaylist = { playlist ->
+                    editingPlaylistFileName = playlist.playlist.id.fileName
+                },
                 onLoadPlaylist = { playlist ->
+                    appState.selectPlaylist(playlist.playlist.id)
+                    appState.saveLastPlaylistSelection(playlist.playlist.id, entryIndex = 0)
                     val resolvedTracks = playlist.resolvedTracks
                     if (resolvedTracks.isNotEmpty()) {
                         connection.loadQueue(resolvedTracks, startIndex = 0, autoplay = false)
                     }
                 },
-                onPlayPlaylistEntry = { playlist, entry ->
+                onLoadPlaylistEntry = { playlist, entry ->
                     val track = entry.track
                     if (track != null) {
+                        appState.selectPlaylist(playlist.playlist.id)
+                        appState.saveLastPlaylistSelection(playlist.playlist.id, entry.index)
                         val resolvedIndex = playlist.entries
                             .take(entry.index + 1)
                             .count { playlistEntry -> playlistEntry.track != null } - 1
-                        connection.loadQueue(playlist.resolvedTracks, resolvedIndex.coerceAtLeast(0), autoplay = true)
+                        connection.loadQueue(playlist.resolvedTracks, resolvedIndex.coerceAtLeast(0), autoplay = false)
                     }
                 },
                 onAddTrackToPlaylist = { playlist, track ->
@@ -152,16 +212,17 @@ fun PromenadeApp() {
                 },
                 onRemovePlaylistEntry = appState::removePlaylistEntry,
                 onMovePlaylistEntry = appState::movePlaylistEntry,
-                onPlayTrack = { track ->
+                onLoadTrack = { track ->
                     val index = library.tracks.indexOf(track)
                     if (index >= 0) {
+                        appState.saveLastTrackSelection(track)
                         connection.setCallsMuted(false)
                         appState.updatePreferences { current ->
                             current.copy(
                                 playbackSettings = current.playbackSettings.copy(callsMuted = false),
                             )
                         }
-                        connection.loadQueue(library.tracks, index, autoplay = true)
+                        connection.loadQueue(library.tracks, index, autoplay = false)
                     }
                 },
                 onPlay = connection::play,
@@ -199,25 +260,67 @@ fun PromenadeApp() {
     }
 }
 
+private enum class PromenadeDestination {
+    Player,
+    Playlists,
+    Settings,
+}
+
+private fun restoreLastLoadedSelection(
+    preferences: AppPreferences,
+    library: LibraryState,
+    connection: PromenadeControllerConnection,
+) {
+    val playlist = preferences.lastPlaylistId?.let { playlistId ->
+        library.playlists.firstOrNull { resolvedPlaylist ->
+            resolvedPlaylist.playlist.id == playlistId
+        }
+    }
+    if (playlist != null && playlist.resolvedTracks.isNotEmpty()) {
+        val savedEntry = preferences.lastPlaylistEntryIndex?.let { entryIndex ->
+            playlist.entries.getOrNull(entryIndex)
+        }?.takeIf { entry -> entry.track != null }
+        val startIndex = savedEntry
+            ?.let { entry -> resolvedIndexFor(playlist, entry) }
+            ?.coerceIn(0, playlist.resolvedTracks.lastIndex)
+            ?: 0
+        connection.loadQueue(playlist.resolvedTracks, startIndex, autoplay = false)
+        return
+    }
+
+    val trackIndex = preferences.lastTrackId?.let { trackId ->
+        library.tracks.indexOfFirst { track -> track.id == trackId }
+    } ?: -1
+    if (trackIndex >= 0) {
+        connection.loadQueue(library.tracks, trackIndex, autoplay = false)
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PromenadeScreen(
+    destination: PromenadeDestination,
     playback: PlaybackSnapshot,
     library: LibraryState,
     preferences: AppPreferences,
     activePlaylist: ResolvedPlaylist?,
+    editingPlaylist: ResolvedPlaylist?,
+    onNavigateToPlayer: () -> Unit,
+    onNavigateToPlaylists: () -> Unit,
+    onNavigateToSettings: () -> Unit,
     onChooseTracksFolder: () -> Unit,
     onChoosePlaylistsFolder: () -> Unit,
     onRescan: () -> Unit,
     onCreatePlaylist: () -> Unit,
-    onSelectPlaylist: (PlaylistId?) -> Unit,
+    onSelectPlaylist: (ResolvedPlaylist) -> Unit,
+    onEditPlaylist: (ResolvedPlaylist) -> Unit,
     onDeletePlaylist: (PlaylistId) -> Unit,
     onLoadPlaylist: (ResolvedPlaylist) -> Unit,
-    onPlayPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
+    onLoadPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
     onAddTrackToPlaylist: (Playlist, Track) -> Unit,
     onRemovePlaylistEntry: (Playlist, Int) -> Unit,
     onMovePlaylistEntry: (Playlist, Int, Int) -> Unit,
-    onPlayTrack: (Track) -> Unit,
+    onLoadTrack: (Track) -> Unit,
     onPlay: () -> Unit,
     onPause: () -> Unit,
     onStop: () -> Unit,
@@ -231,8 +334,43 @@ private fun PromenadeScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(text = "Promenade 2") },
+                title = {
+                    Text(
+                        text = when (destination) {
+                            PromenadeDestination.Player -> "Promenade 2"
+                            PromenadeDestination.Playlists -> "Playlists"
+                            PromenadeDestination.Settings -> "Settings"
+                        },
+                    )
+                },
                 actions = {
+                    IconButton(
+                        onClick = onNavigateToPlayer,
+                        enabled = destination != PromenadeDestination.Player,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.PlayArrow,
+                            contentDescription = "Open player",
+                        )
+                    }
+                    IconButton(
+                        onClick = onNavigateToPlaylists,
+                        enabled = destination != PromenadeDestination.Playlists,
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+                            contentDescription = "Open playlists",
+                        )
+                    }
+                    IconButton(
+                        onClick = onNavigateToSettings,
+                        enabled = destination != PromenadeDestination.Settings,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Settings,
+                            contentDescription = "Open settings",
+                        )
+                    }
                     IconButton(
                         onClick = onRescan,
                         enabled = !library.isScanning,
@@ -257,116 +395,216 @@ private fun PromenadeScreen(
             verticalArrangement = Arrangement.spacedBy(18.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 20.dp),
         ) {
-            item {
-                FolderSetupSection(
-                    library = library,
-                    onChooseTracksFolder = onChooseTracksFolder,
-                    onChoosePlaylistsFolder = onChoosePlaylistsFolder,
-                )
-            }
-
-            item {
-                PlaylistSection(
-                    library = library,
-                    activePlaylist = activePlaylist,
-                    playback = playback,
-                    onCreatePlaylist = onCreatePlaylist,
-                    onSelectPlaylist = onSelectPlaylist,
-                    onDeletePlaylist = onDeletePlaylist,
-                    onLoadPlaylist = onLoadPlaylist,
-                    onPlayPlaylistEntry = onPlayPlaylistEntry,
-                    onRemovePlaylistEntry = onRemovePlaylistEntry,
-                    onMovePlaylistEntry = onMovePlaylistEntry,
-                )
-            }
-
-            item {
-                PlayerSummary(snapshot = playback)
-            }
-
-            item {
-                PlaybackProgress(
-                    snapshot = playback,
-                    onSeek = onSeek,
-                )
-            }
-
-            item {
-                PlaybackControls(
-                    snapshot = playback,
-                    onPlay = onPlay,
-                    onPause = onPause,
-                    onStop = onStop,
-                    onPrevious = onPrevious,
-                    onNext = onNext,
-                )
-            }
-
-            item {
-                PracticeControls(
-                    playback = playback,
-                    settings = preferences.playbackSettings,
-                    onSetBalance = onSetBalance,
-                    onSetCallsMuted = onSetCallsMuted,
-                    onSetAutoMute = onSetAutoMute,
-                )
-            }
-
-            item {
-                SectionHeader(
-                    title = "Tracks",
-                    supportingText = if (library.isScanning) {
-                        "Scanning folders"
-                    } else {
-                        "${library.tracks.size} available"
-                    },
-                )
-            }
-
-            if (library.tracks.isEmpty()) {
-                item {
-                    Text(
-                        text = "Choose a tracks folder containing Promenade track JSON and audio files.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            } else {
-                items(
-                    items = library.tracks.withIndex().toList(),
-                    key = { indexedTrack -> indexedTrack.value.id.jsonFileName },
-                ) { indexedTrack ->
-                    TrackRow(
-                        track = indexedTrack.value,
-                        isCurrent = playback.currentIndex == indexedTrack.index,
-                        activePlaylist = activePlaylist?.playlist,
-                        onPlayTrack = onPlayTrack,
+            when (destination) {
+                PromenadeDestination.Player -> {
+                    playerContent(
+                        library = library,
+                        activePlaylist = activePlaylist,
+                        playback = playback,
+                        preferences = preferences,
+                        onNavigateToSettings = onNavigateToSettings,
+                        onLoadPlaylistEntry = onLoadPlaylistEntry,
+                        onLoadTrack = onLoadTrack,
                         onAddTrackToPlaylist = onAddTrackToPlaylist,
+                        onPlay = onPlay,
+                        onPause = onPause,
+                        onStop = onStop,
+                        onSeek = onSeek,
+                        onPrevious = onPrevious,
+                        onNext = onNext,
+                        onSetBalance = onSetBalance,
+                        onSetCallsMuted = onSetCallsMuted,
+                        onSetAutoMute = onSetAutoMute,
                     )
                 }
-            }
 
-            if (library.diagnostics.isNotEmpty()) {
-                item {
-                    DiagnosticsSection(diagnostics = library.diagnostics)
+                PromenadeDestination.Playlists -> {
+                    playlistsContent(
+                        library = library,
+                        activePlaylist = activePlaylist,
+                        editingPlaylist = editingPlaylist,
+                        playback = playback,
+                        onCreatePlaylist = onCreatePlaylist,
+                        onSelectPlaylist = onSelectPlaylist,
+                        onEditPlaylist = onEditPlaylist,
+                        onDeletePlaylist = onDeletePlaylist,
+                        onLoadPlaylist = onLoadPlaylist,
+                        onLoadPlaylistEntry = onLoadPlaylistEntry,
+                        onAddTrackToPlaylist = onAddTrackToPlaylist,
+                        onRemovePlaylistEntry = onRemovePlaylistEntry,
+                        onMovePlaylistEntry = onMovePlaylistEntry,
+                        onLoadTrack = onLoadTrack,
+                    )
+                }
+
+                PromenadeDestination.Settings -> {
+                    item {
+                        FolderSetupSection(
+                            library = library,
+                            onChooseTracksFolder = onChooseTracksFolder,
+                            onChoosePlaylistsFolder = onChoosePlaylistsFolder,
+                        )
+                    }
+                    diagnosticsContent(library.diagnostics)
                 }
             }
         }
     }
 }
 
-@Composable
-private fun PlaylistSection(
+private fun androidx.compose.foundation.lazy.LazyListScope.playerContent(
     library: LibraryState,
     activePlaylist: ResolvedPlaylist?,
     playback: PlaybackSnapshot,
+    preferences: AppPreferences,
+    onNavigateToSettings: () -> Unit,
+    onLoadPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
+    onLoadTrack: (Track) -> Unit,
+    onAddTrackToPlaylist: (Playlist, Track) -> Unit,
+    onPlay: () -> Unit,
+    onPause: () -> Unit,
+    onStop: () -> Unit,
+    onSeek: (Long) -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onSetBalance: (Float) -> Unit,
+    onSetCallsMuted: (Boolean) -> Unit,
+    onSetAutoMute: (AutoMuteSettings) -> Unit,
+) {
+    if (library.tracksFolder?.available != true || library.playlistsFolder?.available != true) {
+        item {
+            FolderRepairBanner(
+                library = library,
+                onNavigateToSettings = onNavigateToSettings,
+            )
+        }
+    }
+
+    item {
+        PlayerSummary(snapshot = playback)
+    }
+
+    item {
+        PlaybackProgress(
+            snapshot = playback,
+            onSeek = onSeek,
+        )
+    }
+
+    item {
+        PlaybackControls(
+            snapshot = playback,
+            onPlay = onPlay,
+            onPause = onPause,
+            onStop = onStop,
+            onPrevious = onPrevious,
+            onNext = onNext,
+        )
+    }
+
+    item {
+        PracticeControls(
+            playback = playback,
+            settings = preferences.playbackSettings,
+            onSetBalance = onSetBalance,
+            onSetCallsMuted = onSetCallsMuted,
+            onSetAutoMute = onSetAutoMute,
+        )
+    }
+
+    if (activePlaylist != null) {
+        item {
+            SectionHeader(
+                title = activePlaylist.playlist.name,
+                supportingText = "Tap a track to load it paused.",
+            )
+        }
+        playlistEntryItems(
+            playlist = activePlaylist,
+            playback = playback,
+            onLoadPlaylistEntry = onLoadPlaylistEntry,
+            onRemovePlaylistEntry = null,
+            onMovePlaylistEntry = null,
+        )
+    }
+
+    trackListContent(
+        library = library,
+        playback = playback,
+        activePlaylist = activePlaylist?.playlist,
+        onLoadTrack = onLoadTrack,
+        onAddTrackToPlaylist = onAddTrackToPlaylist,
+    )
+
+    diagnosticsContent(library.diagnostics)
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.playlistsContent(
+    library: LibraryState,
+    activePlaylist: ResolvedPlaylist?,
+    editingPlaylist: ResolvedPlaylist?,
+    playback: PlaybackSnapshot,
     onCreatePlaylist: () -> Unit,
-    onSelectPlaylist: (PlaylistId?) -> Unit,
+    onSelectPlaylist: (ResolvedPlaylist) -> Unit,
+    onEditPlaylist: (ResolvedPlaylist) -> Unit,
     onDeletePlaylist: (PlaylistId) -> Unit,
     onLoadPlaylist: (ResolvedPlaylist) -> Unit,
-    onPlayPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
+    onLoadPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
+    onAddTrackToPlaylist: (Playlist, Track) -> Unit,
     onRemovePlaylistEntry: (Playlist, Int) -> Unit,
     onMovePlaylistEntry: (Playlist, Int, Int) -> Unit,
+    onLoadTrack: (Track) -> Unit,
+) {
+    item {
+        PlaylistPickerSection(
+            library = library,
+            activePlaylist = activePlaylist,
+            onCreatePlaylist = onCreatePlaylist,
+            onSelectPlaylist = onSelectPlaylist,
+            onEditPlaylist = onEditPlaylist,
+            onDeletePlaylist = onDeletePlaylist,
+        )
+    }
+
+    if (editingPlaylist != null) {
+        item {
+            ActivePlaylistEditor(
+                playlist = editingPlaylist,
+                playback = playback,
+                onLoadPlaylist = onLoadPlaylist,
+                onLoadPlaylistEntry = onLoadPlaylistEntry,
+                onRemovePlaylistEntry = onRemovePlaylistEntry,
+                onMovePlaylistEntry = onMovePlaylistEntry,
+            )
+        }
+
+        item {
+            SectionHeader(
+                title = "Add Tracks",
+                supportingText = "Available tracks from the tracks folder.",
+            )
+        }
+
+        trackRows(
+            tracks = library.tracks,
+            playback = playback,
+            activePlaylist = editingPlaylist.playlist,
+            onLoadTrack = onLoadTrack,
+            onAddTrackToPlaylist = onAddTrackToPlaylist,
+        )
+    }
+
+    diagnosticsContent(library.diagnostics)
+}
+
+@Composable
+private fun PlaylistPickerSection(
+    library: LibraryState,
+    activePlaylist: ResolvedPlaylist?,
+    onCreatePlaylist: () -> Unit,
+    onSelectPlaylist: (ResolvedPlaylist) -> Unit,
+    onEditPlaylist: (ResolvedPlaylist) -> Unit,
+    onDeletePlaylist: (PlaylistId) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeader(
@@ -389,35 +627,33 @@ private fun PlaylistSection(
             Text(text = "New playlist")
         }
         library.playlists.forEach { playlist ->
-            PlaylistRow(
+            PlaylistPickerRow(
                 playlist = playlist,
                 isActive = activePlaylist?.playlist?.id == playlist.playlist.id,
                 onSelectPlaylist = onSelectPlaylist,
+                onEditPlaylist = onEditPlaylist,
                 onDeletePlaylist = onDeletePlaylist,
-            )
-        }
-        if (activePlaylist != null) {
-            ActivePlaylistEditor(
-                playlist = activePlaylist,
-                playback = playback,
-                onLoadPlaylist = onLoadPlaylist,
-                onPlayPlaylistEntry = onPlayPlaylistEntry,
-                onRemovePlaylistEntry = onRemovePlaylistEntry,
-                onMovePlaylistEntry = onMovePlaylistEntry,
             )
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PlaylistRow(
+private fun PlaylistPickerRow(
     playlist: ResolvedPlaylist,
     isActive: Boolean,
-    onSelectPlaylist: (PlaylistId?) -> Unit,
+    onSelectPlaylist: (ResolvedPlaylist) -> Unit,
+    onEditPlaylist: (ResolvedPlaylist) -> Unit,
     onDeletePlaylist: (PlaylistId) -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = { onSelectPlaylist(playlist) },
+                onLongClick = { onEditPlaylist(playlist) },
+            ),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -426,7 +662,7 @@ private fun PlaylistRow(
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Text(
-                text = if (isActive) "Editing: ${playlist.playlist.name}" else playlist.playlist.name,
+                text = if (isActive) "Selected: ${playlist.playlist.name}" else playlist.playlist.name,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
@@ -439,8 +675,8 @@ private fun PlaylistRow(
             )
         }
         Spacer(modifier = Modifier.width(8.dp))
-        TextButton(onClick = { onSelectPlaylist(playlist.playlist.id) }) {
-            Text(text = if (isActive) "Selected" else "Edit")
+        TextButton(onClick = { onEditPlaylist(playlist) }) {
+            Text(text = "Edit")
         }
         IconButton(onClick = { onDeletePlaylist(playlist.playlist.id) }) {
             Icon(
@@ -456,7 +692,7 @@ private fun ActivePlaylistEditor(
     playlist: ResolvedPlaylist,
     playback: PlaybackSnapshot,
     onLoadPlaylist: (ResolvedPlaylist) -> Unit,
-    onPlayPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
+    onLoadPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
     onRemovePlaylistEntry: (Playlist, Int) -> Unit,
     onMovePlaylistEntry: (Playlist, Int, Int) -> Unit,
 ) {
@@ -489,7 +725,7 @@ private fun ActivePlaylistEditor(
                     playlist = playlist.playlist,
                     entry = entry,
                     isCurrent = playback.currentIndex == resolvedIndexFor(playlist, entry),
-                    onPlayPlaylistEntry = { onPlayPlaylistEntry(playlist, entry) },
+                    onLoadPlaylistEntry = { onLoadPlaylistEntry(playlist, entry) },
                     onRemovePlaylistEntry = onRemovePlaylistEntry,
                     onMovePlaylistEntry = onMovePlaylistEntry,
                 )
@@ -503,12 +739,17 @@ private fun PlaylistEntryRow(
     playlist: Playlist,
     entry: PlaylistEntryResolution,
     isCurrent: Boolean,
-    onPlayPlaylistEntry: () -> Unit,
-    onRemovePlaylistEntry: (Playlist, Int) -> Unit,
-    onMovePlaylistEntry: (Playlist, Int, Int) -> Unit,
+    onLoadPlaylistEntry: () -> Unit,
+    onRemovePlaylistEntry: ((Playlist, Int) -> Unit)?,
+    onMovePlaylistEntry: ((Playlist, Int, Int) -> Unit)?,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                enabled = entry.track != null,
+                onClick = onLoadPlaylistEntry,
+            ),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -538,38 +779,157 @@ private fun PlaylistEntryRow(
             )
         }
         Spacer(modifier = Modifier.width(8.dp))
-        IconButton(
-            onClick = { onMovePlaylistEntry(playlist, entry.index, entry.index - 1) },
-            enabled = entry.index > 0,
-        ) {
-            Icon(
-                imageVector = Icons.Filled.KeyboardArrowUp,
-                contentDescription = "Move entry up",
+        if (onMovePlaylistEntry != null) {
+            IconButton(
+                onClick = { onMovePlaylistEntry(playlist, entry.index, entry.index - 1) },
+                enabled = entry.index > 0,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.KeyboardArrowUp,
+                    contentDescription = "Move entry up",
+                )
+            }
+            IconButton(
+                onClick = { onMovePlaylistEntry(playlist, entry.index, entry.index + 1) },
+                enabled = entry.index < playlist.entries.lastIndex,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.KeyboardArrowDown,
+                    contentDescription = "Move entry down",
+                )
+            }
+        }
+        if (onRemovePlaylistEntry != null) {
+            IconButton(onClick = { onRemovePlaylistEntry(playlist, entry.index) }) {
+                Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = "Remove playlist entry",
+                )
+            }
+        }
+    }
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.playlistEntryItems(
+    playlist: ResolvedPlaylist,
+    playback: PlaybackSnapshot,
+    onLoadPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
+    onRemovePlaylistEntry: ((Playlist, Int) -> Unit)?,
+    onMovePlaylistEntry: ((Playlist, Int, Int) -> Unit)?,
+) {
+    if (playlist.entries.isEmpty()) {
+        item {
+            Text(
+                text = "No tracks in this playlist.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        IconButton(
-            onClick = { onMovePlaylistEntry(playlist, entry.index, entry.index + 1) },
-            enabled = entry.index < playlist.entries.lastIndex,
-        ) {
-            Icon(
-                imageVector = Icons.Filled.KeyboardArrowDown,
-                contentDescription = "Move entry down",
+    } else {
+        items(
+            items = playlist.entries,
+            key = { entry -> "${playlist.playlist.id.fileName}:${entry.index}" },
+        ) { entry ->
+            PlaylistEntryRow(
+                playlist = playlist.playlist,
+                entry = entry,
+                isCurrent = playback.currentIndex == resolvedIndexFor(playlist, entry),
+                onLoadPlaylistEntry = { onLoadPlaylistEntry(playlist, entry) },
+                onRemovePlaylistEntry = onRemovePlaylistEntry,
+                onMovePlaylistEntry = onMovePlaylistEntry,
             )
         }
-        IconButton(
-            onClick = onPlayPlaylistEntry,
-            enabled = entry.track != null,
-        ) {
-            Icon(
-                imageVector = Icons.Filled.PlayArrow,
-                contentDescription = "Play playlist entry",
+    }
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.trackListContent(
+    library: LibraryState,
+    playback: PlaybackSnapshot,
+    activePlaylist: Playlist?,
+    onLoadTrack: (Track) -> Unit,
+    onAddTrackToPlaylist: (Playlist, Track) -> Unit,
+) {
+    item {
+        SectionHeader(
+            title = "Tracks",
+            supportingText = if (library.isScanning) {
+                "Scanning folders"
+            } else {
+                "${library.tracks.size} available"
+            },
+        )
+    }
+
+    if (library.tracks.isEmpty()) {
+        item {
+            Text(
+                text = "Choose a tracks folder containing Promenade track JSON and audio files.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        IconButton(onClick = { onRemovePlaylistEntry(playlist, entry.index) }) {
+    } else {
+        trackRows(
+            tracks = library.tracks,
+            playback = playback,
+            activePlaylist = activePlaylist,
+            onLoadTrack = onLoadTrack,
+            onAddTrackToPlaylist = onAddTrackToPlaylist,
+        )
+    }
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.trackRows(
+    tracks: List<Track>,
+    playback: PlaybackSnapshot,
+    activePlaylist: Playlist?,
+    onLoadTrack: (Track) -> Unit,
+    onAddTrackToPlaylist: (Playlist, Track) -> Unit,
+) {
+    items(
+        items = tracks.withIndex().toList(),
+        key = { indexedTrack -> indexedTrack.value.id.jsonFileName },
+    ) { indexedTrack ->
+        TrackRow(
+            track = indexedTrack.value,
+            isCurrent = playback.currentIndex == indexedTrack.index,
+            activePlaylist = activePlaylist,
+            onLoadTrack = onLoadTrack,
+            onAddTrackToPlaylist = onAddTrackToPlaylist,
+        )
+    }
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.diagnosticsContent(
+    diagnostics: List<LibraryDiagnostic>,
+) {
+    if (diagnostics.isNotEmpty()) {
+        item {
+            DiagnosticsSection(diagnostics = diagnostics)
+        }
+    }
+}
+
+@Composable
+private fun FolderRepairBanner(
+    library: LibraryState,
+    onNavigateToSettings: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionHeader(
+            title = "Folder attention needed",
+            supportingText = listOfNotNull(
+                "Tracks".takeIf { library.tracksFolder?.available != true },
+                "Playlists".takeIf { library.playlistsFolder?.available != true },
+            ).joinToString(prefix = "Open Settings to repair: "),
+        )
+        OutlinedButton(onClick = onNavigateToSettings) {
             Icon(
-                imageVector = Icons.Filled.Delete,
-                contentDescription = "Remove playlist entry",
+                imageVector = Icons.Filled.Settings,
+                contentDescription = null,
             )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(text = "Settings")
         }
     }
 }
@@ -857,11 +1217,13 @@ private fun TrackRow(
     track: Track,
     isCurrent: Boolean,
     activePlaylist: Playlist?,
-    onPlayTrack: (Track) -> Unit,
+    onLoadTrack: (Track) -> Unit,
     onAddTrackToPlaylist: (Playlist, Track) -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onLoadTrack(track) },
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -894,14 +1256,6 @@ private fun TrackRow(
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(text = "Add")
             }
-        }
-        TextButton(onClick = { onPlayTrack(track) }) {
-            Icon(
-                imageVector = Icons.Filled.PlayArrow,
-                contentDescription = null,
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(text = "Play")
         }
     }
 }
