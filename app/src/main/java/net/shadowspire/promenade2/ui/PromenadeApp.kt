@@ -1278,13 +1278,6 @@ private fun AddTrackDialogRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    text = track.audioSummary(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
             }
             Spacer(modifier = Modifier.width(8.dp))
             Icon(
@@ -1461,7 +1454,7 @@ private fun ReorderablePlaylistEntryList(
                 playlist = playlist.playlist,
                 entry = entry,
                 isCurrent = playback.currentIndex == resolvedIndexFor(playlist, entry),
-                showSummary = true,
+                showSummary = false,
                 onLoadPlaylistEntry = { onLoadPlaylistEntry(playlist, entry) },
                 onRemovePlaylistEntry = onRemovePlaylistEntry,
                 dragHandleModifier = Modifier.draggable(
