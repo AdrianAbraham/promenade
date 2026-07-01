@@ -24,6 +24,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
@@ -409,10 +411,7 @@ private fun PromenadeScreen(
             playback = playback,
         )
         if (destination == PromenadeDestination.Player && entryIndex != null) {
-            val listIndex = playerListIndexForEntry(
-                library = library,
-                entryIndex = entryIndex,
-            )
+            val listIndex = playerListIndexForEntry(entryIndex = entryIndex)
             playerListState.animateScrollToItem(listIndex)
         }
     }
@@ -525,8 +524,10 @@ private fun PromenadeScreen(
         bottomBar = {
             if (destination == PromenadeDestination.Player) {
                 PlayerControlsBar(
+                    currentTrack = currentTrack,
                     playback = playback,
                     settings = preferences.playbackSettings,
+                    onNavigateToInstructions = onNavigateToInstructions,
                     onPlay = onPlay,
                     onPause = onPause,
                     onStop = onStop,
@@ -548,10 +549,8 @@ private fun PromenadeScreen(
                 listState = playerListState,
                 library = library,
                 activePlaylist = activePlaylist,
-                currentTrack = currentTrack,
                 playback = playback,
                 onNavigateToSettings = onNavigateToSettings,
-                onNavigateToInstructions = onNavigateToInstructions,
                 onLoadPlaylistEntry = onLoadPlaylistEntry,
                 onLoadTrack = onLoadTrack,
                 onAddTrackToPlaylist = onAddTrackToPlaylist,
@@ -628,10 +627,8 @@ private fun PlayerScreenContent(
     listState: LazyListState,
     library: LibraryState,
     activePlaylist: ResolvedPlaylist?,
-    currentTrack: Track?,
     playback: PlaybackSnapshot,
     onNavigateToSettings: () -> Unit,
-    onNavigateToInstructions: () -> Unit,
     onLoadPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
     onLoadTrack: (Track) -> Unit,
     onAddTrackToPlaylist: (Playlist, Track) -> Unit,
@@ -640,10 +637,22 @@ private fun PlayerScreenContent(
         modifier = modifier.padding(horizontal = 20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        CurrentTrackPanel(
-            track = currentTrack,
-            snapshot = playback,
-            onNavigateToInstructions = onNavigateToInstructions,
+        if (library.tracksFolder?.available != true || library.playlistsFolder?.available != true) {
+            FolderRepairBanner(
+                library = library,
+                onNavigateToSettings = onNavigateToSettings,
+            )
+        }
+
+        SectionHeader(
+            title = activePlaylist?.playlist?.name ?: "Tracks",
+            supportingText = if (activePlaylist == null && library.isScanning) {
+                "Scanning folders"
+            } else if (activePlaylist == null) {
+                "${library.tracks.size} available"
+            } else {
+                null
+            },
         )
 
         LazyColumn(
@@ -654,22 +663,7 @@ private fun PlayerScreenContent(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             contentPadding = PaddingValues(bottom = 12.dp),
         ) {
-            if (library.tracksFolder?.available != true || library.playlistsFolder?.available != true) {
-                item(key = "folder-repair") {
-                    FolderRepairBanner(
-                        library = library,
-                        onNavigateToSettings = onNavigateToSettings,
-                    )
-                }
-            }
-
             if (activePlaylist != null) {
-                item(key = "active-playlist-header") {
-                    SectionHeader(
-                        title = activePlaylist.playlist.name,
-                        supportingText = "Tap a track to load it paused.",
-                    )
-                }
                 playlistEntryItems(
                     playlist = activePlaylist,
                     playback = playback,
@@ -677,9 +671,17 @@ private fun PlayerScreenContent(
                     onRemovePlaylistEntry = null,
                     onMovePlaylistEntry = null,
                 )
+            } else if (library.tracks.isEmpty()) {
+                item {
+                    Text(
+                        text = "Choose a tracks folder containing Promenade track JSON and audio files.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             } else {
-                trackListContent(
-                    library = library,
+                trackRows(
+                    tracks = library.tracks,
                     playback = playback,
                     activePlaylist = null,
                     onLoadTrack = onLoadTrack,
@@ -692,8 +694,10 @@ private fun PlayerScreenContent(
 
 @Composable
 private fun PlayerControlsBar(
+    currentTrack: Track?,
     playback: PlaybackSnapshot,
     settings: PlaybackSettings,
+    onNavigateToInstructions: () -> Unit,
     onPlay: () -> Unit,
     onPause: () -> Unit,
     onStop: () -> Unit,
@@ -714,6 +718,11 @@ private fun PlayerControlsBar(
                 .padding(horizontal = 20.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            CurrentTrackHeader(
+                track = currentTrack,
+                snapshot = playback,
+                onNavigateToInstructions = onNavigateToInstructions,
+            )
             if (playback.playbackDelayActive) {
                 Text(
                     text = "Starting in ${playback.playbackDelayRemainingSeconds}",
@@ -760,14 +769,24 @@ private fun PlayerControlsBar(
                         },
                     )
                 }
-                OutlinedButton(
+                IconButton(
                     onClick = { onSetCallsMuted(!settings.callsMuted) },
                     enabled = playback.hasCalls || settings.callsMuted,
                 ) {
-                    Text(text = if (settings.callsMuted) "Unmute" else "Mute")
+                    Icon(
+                        imageVector = if (settings.callsMuted) {
+                            Icons.AutoMirrored.Filled.VolumeOff
+                        } else {
+                            Icons.AutoMirrored.Filled.VolumeUp
+                        },
+                        contentDescription = if (settings.callsMuted) "Unmute calls" else "Mute calls",
+                    )
                 }
-                OutlinedButton(onClick = onOpenPracticeSettings) {
-                    Text(text = "Practice")
+                IconButton(onClick = onOpenPracticeSettings) {
+                    Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = "Open practice settings",
+                    )
                 }
             }
         }
@@ -1358,49 +1377,34 @@ private fun FolderRow(
 }
 
 @Composable
-private fun CurrentTrackPanel(
+private fun CurrentTrackHeader(
     track: Track?,
     snapshot: PlaybackSnapshot,
     onNavigateToInstructions: () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        SectionHeader(
-            title = "Current Track",
-            supportingText = if (snapshot.isConnected) snapshot.status else "Connecting to playback service",
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = track?.name ?: snapshot.title,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
         )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = track?.name ?: snapshot.title,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (track != null) {
-                IconButton(
-                    onClick = onNavigateToInstructions,
-                    enabled = track.instructionsRef != null,
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Description,
-                        contentDescription = "Open instructions for ${track.name}",
-                    )
-                }
-            }
-        }
         if (track != null) {
-            Text(
-                text = track.trackSummary(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            IconButton(
+                onClick = onNavigateToInstructions,
+                enabled = track.instructionsRef != null,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Description,
+                    contentDescription = "Open instructions for ${track.name}",
+                )
+            }
         }
     }
 }
@@ -1722,26 +1726,18 @@ private fun PlaybackDelayControls(
     settings: PlaybackDelaySettings,
     onSetPlaybackDelay: (PlaybackDelaySettings) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = "Count-in delay",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            delayOptions.forEach { seconds ->
-                OutlinedButton(
-                    onClick = { onSetPlaybackDelay(PlaybackDelaySettings(delaySeconds = seconds)) },
-                    enabled = settings.delaySeconds != seconds,
-                ) {
-                    Text(text = if (seconds == 0) "Off" else "${seconds}s")
-                }
-            }
-        }
-    }
+    SettingDropdown(
+        label = "Count-in delay",
+        selectedText = settings.displayText(),
+        options = delayOptions.map { seconds ->
+            SettingDropdownOption(
+                label = delayLabel(seconds),
+                value = PlaybackDelaySettings(delaySeconds = seconds),
+            )
+        },
+        selectedValue = settings,
+        onOptionSelected = onSetPlaybackDelay,
+    )
 }
 
 @Composable
@@ -1749,33 +1745,61 @@ private fun AutoMuteControls(
     settings: AutoMuteSettings,
     onSetAutoMute: (AutoMuteSettings) -> Unit,
 ) {
+    SettingDropdown(
+        label = "Auto-mute",
+        selectedText = settings.displayText(),
+        options = autoMuteOptions,
+        selectedValue = settings,
+        onOptionSelected = onSetAutoMute,
+    )
+}
+
+@Composable
+private fun <T> SettingDropdown(
+    label: String,
+    selectedText: String,
+    options: List<SettingDropdownOption<T>>,
+    selectedValue: T,
+    onOptionSelected: (T) -> Unit,
+) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = "Auto-mute",
+            text = label,
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+        Box {
             OutlinedButton(
-                onClick = { onSetAutoMute(AutoMuteSettings()) },
-                enabled = settings.isEnabled,
+                onClick = { expanded = true },
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(text = "Off")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(text = selectedText)
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowDown,
+                        contentDescription = null,
+                    )
+                }
             }
-            OutlinedButton(
-                onClick = { onSetAutoMute(AutoMuteSettings(muteAfterRepetition = 2)) },
-                enabled = settings.muteAfterRepetition != 2,
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
             ) {
-                Text(text = "After 2")
-            }
-            OutlinedButton(
-                onClick = { onSetAutoMute(AutoMuteSettings(muteWithRepetitionsRemaining = 1)) },
-                enabled = settings.muteWithRepetitionsRemaining != 1,
-            ) {
-                Text(text = "Last rep")
+                options.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(text = option.label) },
+                        enabled = option.value != selectedValue,
+                        onClick = {
+                            expanded = false
+                            onOptionSelected(option.value)
+                        },
+                    )
+                }
             }
         }
     }
@@ -1916,7 +1940,7 @@ private fun DiagnosticRow(diagnostic: LibraryDiagnostic) {
 @Composable
 private fun SectionHeader(
     title: String,
-    supportingText: String,
+    supportingText: String?,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
@@ -1924,11 +1948,13 @@ private fun SectionHeader(
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
         )
-        Text(
-            text = supportingText,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        if (supportingText != null) {
+            Text(
+                text = supportingText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -1967,20 +1993,8 @@ private fun currentPlaylistEntryIndex(
 }
 
 private fun playerListIndexForEntry(
-    library: LibraryState,
     entryIndex: Int,
-): Int {
-    val folderRepairItemCount = if (
-        library.tracksFolder?.available != true ||
-        library.playlistsFolder?.available != true
-    ) {
-        1
-    } else {
-        0
-    }
-    val playlistHeaderItemCount = 1
-    return folderRepairItemCount + playlistHeaderItemCount + entryIndex
-}
+): Int = entryIndex
 
 private fun LibraryDiagnostic.displayText(): String {
     val prefix = when (severity) {
@@ -1991,6 +2005,18 @@ private fun LibraryDiagnostic.displayText(): String {
     return "$prefix$file: $message"
 }
 
+private fun PlaybackDelaySettings.displayText(): String = delayLabel(delaySeconds)
+
+private fun AutoMuteSettings.displayText(): String =
+    autoMuteOptions.firstOrNull { option -> option.value == this }?.label ?: "Custom"
+
+private fun delayLabel(seconds: Int): String =
+    if (seconds == 0) {
+        "Off"
+    } else {
+        "${seconds}s"
+    }
+
 private fun formatDuration(milliseconds: Long): String {
     val totalSeconds = (milliseconds / 1_000L).coerceAtLeast(0L)
     val minutes = totalSeconds / 60L
@@ -1998,5 +2024,24 @@ private fun formatDuration(milliseconds: Long): String {
     return "%d:%02d".format(minutes, seconds)
 }
 
+private data class SettingDropdownOption<T>(
+    val label: String,
+    val value: T,
+)
+
 private const val MAX_VISIBLE_DIAGNOSTICS = 8
 private val delayOptions = listOf(0, 3, 5, 10)
+private val autoMuteOptions = listOf(
+    SettingDropdownOption(
+        label = "Off",
+        value = AutoMuteSettings(),
+    ),
+    SettingDropdownOption(
+        label = "After 2",
+        value = AutoMuteSettings(muteAfterRepetition = 2),
+    ),
+    SettingDropdownOption(
+        label = "Last rep",
+        value = AutoMuteSettings(muteWithRepetitionsRemaining = 1),
+    ),
+)
