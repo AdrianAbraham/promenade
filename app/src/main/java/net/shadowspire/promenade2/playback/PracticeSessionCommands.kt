@@ -8,6 +8,7 @@ object PracticeSessionCommands {
     const val SetCallsMuted = "net.shadowspire.promenade2.SET_CALLS_MUTED"
     const val SetAutoMute = "net.shadowspire.promenade2.SET_AUTO_MUTE"
     const val SetPlaybackDelay = "net.shadowspire.promenade2.SET_PLAYBACK_DELAY"
+    const val CancelPlaybackDelay = "net.shadowspire.promenade2.CANCEL_PLAYBACK_DELAY"
 
     const val Balance = "balance"
     const val CallsMuted = "callsMuted"
@@ -19,4 +20,5 @@ object PracticeSessionCommands {
     val CallsMutedCommand = SessionCommand(SetCallsMuted, Bundle.EMPTY)
     val AutoMuteCommand = SessionCommand(SetAutoMute, Bundle.EMPTY)
     val PlaybackDelayCommand = SessionCommand(SetPlaybackDelay, Bundle.EMPTY)
+    val CancelPlaybackDelayCommand = SessionCommand(CancelPlaybackDelay, Bundle.EMPTY)
 }

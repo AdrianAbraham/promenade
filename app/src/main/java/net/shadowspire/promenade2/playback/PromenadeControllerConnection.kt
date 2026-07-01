@@ -109,6 +109,9 @@ class PromenadeControllerConnection(context: Context) {
     }
 
     fun pause() {
+        if (_snapshot.value.playbackDelayActive) {
+            controller?.sendCustomCommand(PracticeSessionCommands.CancelPlaybackDelayCommand, Bundle.EMPTY)
+        }
         controller?.pause()
     }
 

@@ -71,6 +71,15 @@ class DualAudioCoordinator(
         }
     }
 
+    fun cancelPendingPlaybackDelay(): Boolean {
+        val hadDelay = delayJob != null || PlaybackDelayStatusStore.status.value.isCountingDown
+        cancelPlaybackDelay()
+        return hadDelay
+    }
+
+    fun isPlaybackDelayActive(): Boolean =
+        delayJob != null || PlaybackDelayStatusStore.status.value.isCountingDown
+
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         cancelPlaybackDelay()
         manualCallsMuted = false
@@ -89,8 +98,12 @@ class DualAudioCoordinator(
             return
         }
 
-        if (!isPlaying && !pausingForDelay) {
-            cancelPlaybackDelay()
+        if (!isPlaying) {
+            if (pausingForDelay) {
+                pausingForDelay = false
+            } else if (delayJob == null) {
+                cancelPlaybackDelay()
+            }
         }
 
         if (isPlaying && callsLoaded && callsPlayer.volume > 0f) {
@@ -138,7 +151,6 @@ class DualAudioCoordinator(
         callsPlayer.pause()
         pausingForDelay = true
         musicPlayer.pause()
-        pausingForDelay = false
 
         delayJob = scope.launch {
             for (remaining in seconds downTo 1) {
@@ -152,6 +164,7 @@ class DualAudioCoordinator(
             }
 
             delayJob = null
+            pausingForDelay = false
             PlaybackDelayStatusStore.update(PlaybackDelayStatus())
             skipNextDelayStart = true
             musicPlayer.play()
@@ -162,6 +175,7 @@ class DualAudioCoordinator(
         val hadDelay = delayJob != null
         delayJob?.cancel()
         delayJob = null
+        pausingForDelay = false
         if (hadDelay || PlaybackDelayStatusStore.status.value.isCountingDown) {
             PlaybackDelayStatusStore.update(PlaybackDelayStatus())
         }

@@ -95,6 +95,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
@@ -831,17 +832,6 @@ private fun PlayerControlsBar(
                 snapshot = playback,
                 onNavigateToInstructions = onNavigateToInstructions,
             )
-            if (playback.playbackDelayActive) {
-                Text(
-                    text = "Starting in ${playback.playbackDelayRemainingSeconds}",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.semantics {
-                        contentDescription = "Playback starts in ${playback.playbackDelayRemainingSeconds} seconds"
-                    },
-                )
-            }
             PlaybackProgress(
                 snapshot = playback,
                 onSeek = onSeek,
@@ -2101,10 +2091,34 @@ private fun PlaybackProgress(
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(text = formatDuration(snapshot.positionMs))
-            Text(text = formatDuration(snapshot.durationMs))
+            Text(
+                text = formatDuration(snapshot.positionMs),
+                modifier = Modifier.weight(1f),
+            )
+            if (snapshot.playbackDelayActive) {
+                Text(
+                    text = "Starting in ${snapshot.playbackDelayRemainingSeconds}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .semantics {
+                            contentDescription =
+                                "Playback starts in ${snapshot.playbackDelayRemainingSeconds} seconds"
+                        },
+                )
+            } else {
+                Spacer(modifier = Modifier.weight(1f))
+            }
+            Text(
+                text = formatDuration(snapshot.durationMs),
+                textAlign = TextAlign.End,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
@@ -2118,6 +2132,7 @@ private fun PlaybackControls(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
 ) {
+    val isPlayingOrStarting = snapshot.isPlaying || snapshot.playbackDelayActive
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Center,
@@ -2134,12 +2149,12 @@ private fun PlaybackControls(
         }
         Spacer(modifier = Modifier.width(12.dp))
         IconButton(
-            onClick = if (snapshot.isPlaying) onPause else onPlay,
+            onClick = if (isPlayingOrStarting) onPause else onPlay,
             enabled = snapshot.canPlay,
         ) {
             Icon(
-                imageVector = if (snapshot.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                contentDescription = if (snapshot.isPlaying) "Pause" else "Play",
+                imageVector = if (isPlayingOrStarting) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                contentDescription = if (isPlayingOrStarting) "Pause" else "Play",
             )
         }
         Spacer(modifier = Modifier.width(12.dp))
