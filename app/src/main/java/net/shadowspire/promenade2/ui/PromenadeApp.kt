@@ -1109,6 +1109,7 @@ private fun ActivePlaylistEditor(
                     playlist = playlist.playlist,
                     entry = entry,
                     isCurrent = playback.currentIndex == resolvedIndexFor(playlist, entry),
+                    showSummary = true,
                     onLoadPlaylistEntry = { onLoadPlaylistEntry(playlist, entry) },
                     onRemovePlaylistEntry = onRemovePlaylistEntry,
                     onMovePlaylistEntry = onMovePlaylistEntry,
@@ -1123,6 +1124,7 @@ private fun PlaylistEntryRow(
     playlist: Playlist,
     entry: PlaylistEntryResolution,
     isCurrent: Boolean,
+    showSummary: Boolean,
     onLoadPlaylistEntry: () -> Unit,
     onRemovePlaylistEntry: ((Playlist, Int) -> Unit)?,
     onMovePlaylistEntry: ((Playlist, Int, Int) -> Unit)?,
@@ -1175,13 +1177,15 @@ private fun PlaylistEntryRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    text = entry.track?.audioSummary() ?: entry.trackId.jsonFileName,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = rowContentColor,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                if (showSummary || entry.track == null) {
+                    Text(
+                        text = entry.track?.audioSummary() ?: entry.trackId.jsonFileName,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = rowContentColor,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             Spacer(modifier = Modifier.width(8.dp))
             if (onMovePlaylistEntry != null) {
@@ -1240,6 +1244,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.playlistEntryItems(
                 playlist = playlist.playlist,
                 entry = entry,
                 isCurrent = playback.currentIndex == resolvedIndexFor(playlist, entry),
+                showSummary = onRemovePlaylistEntry != null || onMovePlaylistEntry != null,
                 onLoadPlaylistEntry = { onLoadPlaylistEntry(playlist, entry) },
                 onRemovePlaylistEntry = onRemovePlaylistEntry,
                 onMovePlaylistEntry = onMovePlaylistEntry,
