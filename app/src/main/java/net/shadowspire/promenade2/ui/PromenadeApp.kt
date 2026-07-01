@@ -8,7 +8,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,7 +19,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Add
@@ -26,6 +30,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -37,7 +42,10 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -387,6 +395,28 @@ private fun PromenadeScreen(
     onSetAutoMute: (AutoMuteSettings) -> Unit,
     onSetPlaybackDelay: (PlaybackDelaySettings) -> Unit,
 ) {
+    val playerListState = rememberLazyListState()
+    var menuExpanded by rememberSaveable { mutableStateOf(false) }
+    var practiceSettingsOpen by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(
+        destination,
+        activePlaylist?.playlist?.id,
+        playback.currentIndex,
+    ) {
+        val entryIndex = currentPlaylistEntryIndex(
+            playlist = activePlaylist,
+            playback = playback,
+        )
+        if (destination == PromenadeDestination.Player && entryIndex != null) {
+            val listIndex = playerListIndexForEntry(
+                library = library,
+                entryIndex = entryIndex,
+            )
+            playerListState.animateScrollToItem(listIndex)
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -418,53 +448,73 @@ private fun PromenadeScreen(
                             )
                         }
                     }
-                    if (destination != PromenadeDestination.Instructions) {
-                        IconButton(onClick = onNavigateToInstructions) {
+                    Box {
+                        IconButton(onClick = { menuExpanded = true }) {
                             Icon(
-                                imageVector = Icons.Filled.Description,
-                                contentDescription = "Open instructions",
+                                imageVector = Icons.Filled.Menu,
+                                contentDescription = "Open menu",
                             )
                         }
-                    }
-                    if (destination != PromenadeDestination.Diagnostics) {
-                        IconButton(onClick = onNavigateToDiagnostics) {
-                            BadgedBox(
-                                badge = {
-                                    if (library.diagnostics.isNotEmpty()) {
-                                        Badge {
-                                            Text(text = library.diagnostics.size.coerceAtMost(99).toString())
-                                        }
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(text = "Diagnostics") },
+                                leadingIcon = {
+                                    BadgedBox(
+                                        badge = {
+                                            if (library.diagnostics.isNotEmpty()) {
+                                                Badge {
+                                                    Text(text = library.diagnostics.size.coerceAtMost(99).toString())
+                                                }
+                                            }
+                                        },
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Warning,
+                                            contentDescription = null,
+                                            tint = if (library.diagnostics.isEmpty()) {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            } else {
+                                                MaterialTheme.colorScheme.error
+                                            },
+                                        )
                                     }
                                 },
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Warning,
-                                    contentDescription = diagnosticsContentDescription(library.diagnostics.size),
-                                    tint = if (library.diagnostics.isEmpty()) {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    } else {
-                                        MaterialTheme.colorScheme.error
-                                    },
-                                )
-                            }
-                        }
-                    }
-                    if (destination != PromenadeDestination.Settings) {
-                        IconButton(onClick = onNavigateToSettings) {
-                            Icon(
-                                imageVector = Icons.Filled.Settings,
-                                contentDescription = "Open settings",
+                                onClick = {
+                                    menuExpanded = false
+                                    onNavigateToDiagnostics()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(text = "Refresh") },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Filled.Refresh,
+                                        contentDescription = null,
+                                    )
+                                },
+                                enabled = !library.isScanning,
+                                onClick = {
+                                    menuExpanded = false
+                                    onRescan()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(text = "Settings") },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Filled.Settings,
+                                        contentDescription = null,
+                                    )
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    onNavigateToSettings()
+                                },
                             )
                         }
-                    }
-                    IconButton(
-                        onClick = onRescan,
-                        enabled = !library.isScanning,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Refresh,
-                            contentDescription = "Rescan folders",
-                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -472,96 +522,178 @@ private fun PromenadeScreen(
                 ),
             )
         },
+        bottomBar = {
+            if (destination == PromenadeDestination.Player) {
+                PlayerControlsBar(
+                    playback = playback,
+                    settings = preferences.playbackSettings,
+                    onPlay = onPlay,
+                    onPause = onPause,
+                    onStop = onStop,
+                    onSeek = onSeek,
+                    onPrevious = onPrevious,
+                    onNext = onNext,
+                    onSetBalance = onSetBalance,
+                    onSetCallsMuted = onSetCallsMuted,
+                    onOpenPracticeSettings = { practiceSettingsOpen = true },
+                )
+            }
+        },
     ) { innerPadding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 20.dp),
-        ) {
-            when (destination) {
-                PromenadeDestination.Player -> {
-                    playerContent(
-                        library = library,
-                        activePlaylist = activePlaylist,
-                        currentTrack = currentTrack,
-                        playback = playback,
-                        preferences = preferences,
-                        onNavigateToSettings = onNavigateToSettings,
-                        onNavigateToInstructions = onNavigateToInstructions,
-                        onLoadPlaylistEntry = onLoadPlaylistEntry,
-                        onLoadTrack = onLoadTrack,
-                        onAddTrackToPlaylist = onAddTrackToPlaylist,
-                        onPlay = onPlay,
-                        onPause = onPause,
-                        onStop = onStop,
-                        onSeek = onSeek,
-                        onPrevious = onPrevious,
-                        onNext = onNext,
-                        onSetBalance = onSetBalance,
-                        onSetCallsMuted = onSetCallsMuted,
-                        onSetAutoMute = onSetAutoMute,
-                        onSetPlaybackDelay = onSetPlaybackDelay,
-                    )
-                }
-
-                PromenadeDestination.Playlists -> {
-                    playlistsContent(
-                        library = library,
-                        activePlaylist = activePlaylist,
-                        editingPlaylist = editingPlaylist,
-                        playback = playback,
-                        onCreatePlaylist = onCreatePlaylist,
-                        onSelectPlaylist = onSelectPlaylist,
-                        onEditPlaylist = onEditPlaylist,
-                        onDeletePlaylist = onDeletePlaylist,
-                        onLoadPlaylist = onLoadPlaylist,
-                        onLoadPlaylistEntry = onLoadPlaylistEntry,
-                        onAddTrackToPlaylist = onAddTrackToPlaylist,
-                        onRemovePlaylistEntry = onRemovePlaylistEntry,
-                        onMovePlaylistEntry = onMovePlaylistEntry,
-                        onLoadTrack = onLoadTrack,
-                    )
-                }
-
-                PromenadeDestination.Settings -> {
-                    item {
-                        FolderSetupSection(
+        if (destination == PromenadeDestination.Player) {
+            PlayerScreenContent(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
+                listState = playerListState,
+                library = library,
+                activePlaylist = activePlaylist,
+                currentTrack = currentTrack,
+                playback = playback,
+                onNavigateToSettings = onNavigateToSettings,
+                onNavigateToInstructions = onNavigateToInstructions,
+                onLoadPlaylistEntry = onLoadPlaylistEntry,
+                onLoadTrack = onLoadTrack,
+                onAddTrackToPlaylist = onAddTrackToPlaylist,
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .padding(horizontal = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
+                contentPadding = PaddingValues(vertical = 20.dp),
+            ) {
+                when (destination) {
+                    PromenadeDestination.Playlists -> {
+                        playlistsContent(
                             library = library,
-                            onChooseTracksFolder = onChooseTracksFolder,
-                            onChoosePlaylistsFolder = onChoosePlaylistsFolder,
+                            activePlaylist = activePlaylist,
+                            editingPlaylist = editingPlaylist,
+                            playback = playback,
+                            onCreatePlaylist = onCreatePlaylist,
+                            onSelectPlaylist = onSelectPlaylist,
+                            onEditPlaylist = onEditPlaylist,
+                            onDeletePlaylist = onDeletePlaylist,
+                            onLoadPlaylist = onLoadPlaylist,
+                            onLoadPlaylistEntry = onLoadPlaylistEntry,
+                            onAddTrackToPlaylist = onAddTrackToPlaylist,
+                            onRemovePlaylistEntry = onRemovePlaylistEntry,
+                            onMovePlaylistEntry = onMovePlaylistEntry,
+                            onLoadTrack = onLoadTrack,
                         )
                     }
-                    diagnosticsContent(library.diagnostics)
-                }
 
-                PromenadeDestination.Instructions -> {
-                    item {
-                        InstructionsScreen(currentTrack = currentTrack)
+                    PromenadeDestination.Settings -> {
+                        item {
+                            FolderSetupSection(
+                                library = library,
+                                onChooseTracksFolder = onChooseTracksFolder,
+                                onChoosePlaylistsFolder = onChoosePlaylistsFolder,
+                            )
+                        }
+                        diagnosticsContent(library.diagnostics)
                     }
-                }
 
-                PromenadeDestination.Diagnostics -> {
-                    diagnosticsScreenContent(library.diagnostics)
+                    PromenadeDestination.Instructions -> {
+                        item {
+                            InstructionsScreen(currentTrack = currentTrack)
+                        }
+                    }
+
+                    PromenadeDestination.Diagnostics -> {
+                        diagnosticsScreenContent(library.diagnostics)
+                    }
+
+                    PromenadeDestination.Player -> Unit
                 }
             }
         }
     }
+
+    if (practiceSettingsOpen) {
+        PracticeSettingsDialog(
+            settings = preferences.playbackSettings,
+            onDismiss = { practiceSettingsOpen = false },
+            onSetAutoMute = onSetAutoMute,
+            onSetPlaybackDelay = onSetPlaybackDelay,
+        )
+    }
 }
 
-private fun androidx.compose.foundation.lazy.LazyListScope.playerContent(
+@Composable
+private fun PlayerScreenContent(
+    modifier: Modifier,
+    listState: LazyListState,
     library: LibraryState,
     activePlaylist: ResolvedPlaylist?,
     currentTrack: Track?,
     playback: PlaybackSnapshot,
-    preferences: AppPreferences,
     onNavigateToSettings: () -> Unit,
     onNavigateToInstructions: () -> Unit,
     onLoadPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
     onLoadTrack: (Track) -> Unit,
     onAddTrackToPlaylist: (Playlist, Track) -> Unit,
+) {
+    Column(
+        modifier = modifier.padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        CurrentTrackPanel(
+            track = currentTrack,
+            snapshot = playback,
+            onNavigateToInstructions = onNavigateToInstructions,
+        )
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            state = listState,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(bottom = 12.dp),
+        ) {
+            if (library.tracksFolder?.available != true || library.playlistsFolder?.available != true) {
+                item(key = "folder-repair") {
+                    FolderRepairBanner(
+                        library = library,
+                        onNavigateToSettings = onNavigateToSettings,
+                    )
+                }
+            }
+
+            if (activePlaylist != null) {
+                item(key = "active-playlist-header") {
+                    SectionHeader(
+                        title = activePlaylist.playlist.name,
+                        supportingText = "Tap a track to load it paused.",
+                    )
+                }
+                playlistEntryItems(
+                    playlist = activePlaylist,
+                    playback = playback,
+                    onLoadPlaylistEntry = onLoadPlaylistEntry,
+                    onRemovePlaylistEntry = null,
+                    onMovePlaylistEntry = null,
+                )
+            } else {
+                trackListContent(
+                    library = library,
+                    playback = playback,
+                    activePlaylist = null,
+                    onLoadTrack = onLoadTrack,
+                    onAddTrackToPlaylist = onAddTrackToPlaylist,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayerControlsBar(
+    playback: PlaybackSnapshot,
+    settings: PlaybackSettings,
     onPlay: () -> Unit,
     onPause: () -> Unit,
     onStop: () -> Unit,
@@ -570,80 +702,106 @@ private fun androidx.compose.foundation.lazy.LazyListScope.playerContent(
     onNext: () -> Unit,
     onSetBalance: (Float) -> Unit,
     onSetCallsMuted: (Boolean) -> Unit,
+    onOpenPracticeSettings: () -> Unit,
+) {
+    Surface(
+        tonalElevation = 3.dp,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (playback.playbackDelayActive) {
+                Text(
+                    text = "Starting in ${playback.playbackDelayRemainingSeconds}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.semantics {
+                        contentDescription = "Playback starts in ${playback.playbackDelayRemainingSeconds} seconds"
+                    },
+                )
+            }
+            PlaybackProgress(
+                snapshot = playback,
+                onSeek = onSeek,
+            )
+            PlaybackControls(
+                snapshot = playback,
+                onPlay = onPlay,
+                onPause = onPause,
+                onStop = onStop,
+                onPrevious = onPrevious,
+                onNext = onNext,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = "Music / calls",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Slider(
+                        value = settings.balance,
+                        onValueChange = onSetBalance,
+                        valueRange = 0f..1f,
+                        modifier = Modifier.semantics {
+                            contentDescription = "Music calls balance"
+                        },
+                    )
+                }
+                OutlinedButton(
+                    onClick = { onSetCallsMuted(!settings.callsMuted) },
+                    enabled = playback.hasCalls || settings.callsMuted,
+                ) {
+                    Text(text = if (settings.callsMuted) "Unmute" else "Mute")
+                }
+                OutlinedButton(onClick = onOpenPracticeSettings) {
+                    Text(text = "Practice")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PracticeSettingsDialog(
+    settings: PlaybackSettings,
+    onDismiss: () -> Unit,
     onSetAutoMute: (AutoMuteSettings) -> Unit,
     onSetPlaybackDelay: (PlaybackDelaySettings) -> Unit,
 ) {
-    if (library.tracksFolder?.available != true || library.playlistsFolder?.available != true) {
-        item {
-            FolderRepairBanner(
-                library = library,
-                onNavigateToSettings = onNavigateToSettings,
-            )
-        }
-    }
-
-    item {
-        CurrentTrackPanel(
-            track = currentTrack,
-            snapshot = playback,
-            onNavigateToInstructions = onNavigateToInstructions,
-        )
-    }
-
-    item {
-        PlaybackProgress(
-            snapshot = playback,
-            onSeek = onSeek,
-        )
-    }
-
-    item {
-        PlaybackControls(
-            snapshot = playback,
-            onPlay = onPlay,
-            onPause = onPause,
-            onStop = onStop,
-            onPrevious = onPrevious,
-            onNext = onNext,
-        )
-    }
-
-    item {
-        PracticeControls(
-            playback = playback,
-            settings = preferences.playbackSettings,
-            onSetBalance = onSetBalance,
-            onSetCallsMuted = onSetCallsMuted,
-            onSetAutoMute = onSetAutoMute,
-            onSetPlaybackDelay = onSetPlaybackDelay,
-        )
-    }
-
-    if (activePlaylist != null) {
-        item {
-            SectionHeader(
-                title = activePlaylist.playlist.name,
-                supportingText = "Tap a track to load it paused.",
-            )
-        }
-        playlistEntryItems(
-            playlist = activePlaylist,
-            playback = playback,
-            onLoadPlaylistEntry = onLoadPlaylistEntry,
-            onRemovePlaylistEntry = null,
-            onMovePlaylistEntry = null,
-        )
-    }
-
-    trackListContent(
-        library = library,
-        playback = playback,
-        activePlaylist = activePlaylist?.playlist,
-        onLoadTrack = onLoadTrack,
-        onAddTrackToPlaylist = onAddTrackToPlaylist,
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = "Done")
+            }
+        },
+        title = { Text(text = "Practice Settings") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                AutoMuteControls(
+                    settings = settings.autoMute,
+                    onSetAutoMute = onSetAutoMute,
+                )
+                PlaybackDelayControls(
+                    settings = settings.playbackDelay,
+                    onSetPlaybackDelay = onSetPlaybackDelay,
+                )
+            }
+        },
     )
-
-    diagnosticsContent(library.diagnostics)
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.playlistsContent(
@@ -754,7 +912,7 @@ private fun PlaylistPickerRow(
     onEditPlaylist: (ResolvedPlaylist) -> Unit,
     onDeletePlaylist: (PlaylistId) -> Unit,
 ) {
-    Row(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(
@@ -766,35 +924,60 @@ private fun PlaylistPickerRow(
             .semantics {
                 contentDescription = "Playlist ${playlist.playlist.name}. Tap to select. Long press to edit."
             },
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+        color = if (isActive) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerLow
+        },
+        contentColor = if (isActive) {
+            MaterialTheme.colorScheme.onPrimaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurface
+        },
+        tonalElevation = if (isActive) 2.dp else 1.dp,
     ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = if (isActive) "Selected: ${playlist.playlist.name}" else playlist.playlist.name,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = "${playlist.entries.size} entries, ${playlist.unresolvedCount} unresolved",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Spacer(modifier = Modifier.width(8.dp))
-        TextButton(onClick = { onEditPlaylist(playlist) }) {
-            Text(text = "Edit")
-        }
-        IconButton(onClick = { onDeletePlaylist(playlist.playlist.id) }) {
-            Icon(
-                imageVector = Icons.Filled.Delete,
-                contentDescription = "Delete ${playlist.playlist.name}",
-            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = playlist.playlist.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = if (isActive) {
+                        "Selected - ${playlist.entries.size} entries, ${playlist.unresolvedCount} unresolved"
+                    } else {
+                        "${playlist.entries.size} entries, ${playlist.unresolvedCount} unresolved"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (isActive) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            TextButton(onClick = { onEditPlaylist(playlist) }) {
+                Text(text = "Edit")
+            }
+            IconButton(onClick = { onDeletePlaylist(playlist.playlist.id) }) {
+                Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = "Delete ${playlist.playlist.name}",
+                )
+            }
         }
     }
 }
@@ -855,7 +1038,18 @@ private fun PlaylistEntryRow(
     onRemovePlaylistEntry: ((Playlist, Int) -> Unit)?,
     onMovePlaylistEntry: ((Playlist, Int, Int) -> Unit)?,
 ) {
-    Row(
+    val rowColor = when {
+        entry.track == null -> MaterialTheme.colorScheme.errorContainer
+        isCurrent -> MaterialTheme.colorScheme.primaryContainer
+        else -> MaterialTheme.colorScheme.surfaceContainerLow
+    }
+    val rowContentColor = when {
+        entry.track == null -> MaterialTheme.colorScheme.onErrorContainer
+        isCurrent -> MaterialTheme.colorScheme.onPrimaryContainer
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(
@@ -870,61 +1064,64 @@ private fun PlaylistEntryRow(
                     "Load ${entry.track.name} paused"
                 }
             },
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+        color = rowColor,
+        contentColor = rowContentColor,
+        tonalElevation = if (isCurrent) 2.dp else 1.dp,
     ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = when {
-                    entry.track != null && isCurrent -> "Now: ${entry.track.name}"
-                    entry.track != null -> entry.track.name
-                    else -> "Missing: ${entry.trackId.jsonFileName}"
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (entry.track == null) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = "Entry ${entry.index + 1}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Spacer(modifier = Modifier.width(8.dp))
-        if (onMovePlaylistEntry != null) {
-            IconButton(
-                onClick = { onMovePlaylistEntry(playlist, entry.index, entry.index - 1) },
-                enabled = entry.index > 0,
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Icon(
-                    imageVector = Icons.Filled.KeyboardArrowUp,
-                    contentDescription = "Move entry up",
+                Text(
+                    text = entry.track?.name ?: "Missing: ${entry.trackId.jsonFileName}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = entry.track?.trackSummary() ?: entry.trackId.jsonFileName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = rowContentColor,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
-            IconButton(
-                onClick = { onMovePlaylistEntry(playlist, entry.index, entry.index + 1) },
-                enabled = entry.index < playlist.entries.lastIndex,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.KeyboardArrowDown,
-                    contentDescription = "Move entry down",
-                )
+            Spacer(modifier = Modifier.width(8.dp))
+            if (onMovePlaylistEntry != null) {
+                IconButton(
+                    onClick = { onMovePlaylistEntry(playlist, entry.index, entry.index - 1) },
+                    enabled = entry.index > 0,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowUp,
+                        contentDescription = "Move entry up",
+                    )
+                }
+                IconButton(
+                    onClick = { onMovePlaylistEntry(playlist, entry.index, entry.index + 1) },
+                    enabled = entry.index < playlist.entries.lastIndex,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowDown,
+                        contentDescription = "Move entry down",
+                    )
+                }
             }
-        }
-        if (onRemovePlaylistEntry != null) {
-            IconButton(onClick = { onRemovePlaylistEntry(playlist, entry.index) }) {
-                Icon(
-                    imageVector = Icons.Filled.Delete,
-                    contentDescription = "Remove playlist entry",
-                )
+            if (onRemovePlaylistEntry != null) {
+                IconButton(onClick = { onRemovePlaylistEntry(playlist, entry.index) }) {
+                    Icon(
+                        imageVector = Icons.Filled.Delete,
+                        contentDescription = "Remove playlist entry",
+                    )
+                }
             }
         }
     }
@@ -1171,13 +1368,31 @@ private fun CurrentTrackPanel(
             title = "Current Track",
             supportingText = if (snapshot.isConnected) snapshot.status else "Connecting to playback service",
         )
-        Text(
-            text = track?.name ?: snapshot.title,
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = track?.name ?: snapshot.title,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (track != null) {
+                IconButton(
+                    onClick = onNavigateToInstructions,
+                    enabled = track.instructionsRef != null,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Description,
+                        contentDescription = "Open instructions for ${track.name}",
+                    )
+                }
+            }
+        }
         if (track != null) {
             Text(
                 text = track.trackSummary(),
@@ -1186,17 +1401,6 @@ private fun CurrentTrackPanel(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            OutlinedButton(
-                onClick = onNavigateToInstructions,
-                enabled = track.instructionsRef != null,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Description,
-                    contentDescription = null,
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(text = "Instructions")
-            }
         }
     }
 }
@@ -1514,75 +1718,6 @@ private fun PlaybackControls(
 }
 
 @Composable
-private fun PracticeControls(
-    playback: PlaybackSnapshot,
-    settings: PlaybackSettings,
-    onSetBalance: (Float) -> Unit,
-    onSetCallsMuted: (Boolean) -> Unit,
-    onSetAutoMute: (AutoMuteSettings) -> Unit,
-    onSetPlaybackDelay: (PlaybackDelaySettings) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SectionHeader(
-            title = "Practice",
-            supportingText = playback.practiceStatus(),
-        )
-        if (playback.playbackDelayActive) {
-            Text(
-                text = "Starting in ${playback.playbackDelayRemainingSeconds}",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.semantics {
-                    contentDescription = "Playback starts in ${playback.playbackDelayRemainingSeconds} seconds"
-                },
-            )
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                text = "Music / calls balance",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Slider(
-                value = settings.balance,
-                onValueChange = onSetBalance,
-                valueRange = 0f..1f,
-                modifier = Modifier.semantics {
-                    contentDescription = "Music calls balance"
-                },
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(text = "Music")
-                Text(text = "Calls")
-            }
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Button(
-                onClick = { onSetCallsMuted(!settings.callsMuted) },
-                enabled = playback.hasCalls || settings.callsMuted,
-            ) {
-                Text(text = if (settings.callsMuted) "Unmute calls" else "Mute calls")
-            }
-        }
-        AutoMuteControls(
-            settings = settings.autoMute,
-            onSetAutoMute = onSetAutoMute,
-        )
-        PlaybackDelayControls(
-            settings = settings.playbackDelay,
-            onSetPlaybackDelay = onSetPlaybackDelay,
-        )
-    }
-}
-
-@Composable
 private fun PlaybackDelayControls(
     settings: PlaybackDelaySettings,
     onSetPlaybackDelay: (PlaybackDelaySettings) -> Unit,
@@ -1654,7 +1789,13 @@ private fun TrackRow(
     onLoadTrack: (Track) -> Unit,
     onAddTrackToPlaylist: (Playlist, Track) -> Unit,
 ) {
-    Row(
+    val rowContentColor = if (isCurrent) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(
@@ -1664,37 +1805,50 @@ private fun TrackRow(
             .semantics {
                 contentDescription = "Load track ${track.name} paused"
             },
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+        color = if (isCurrent) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerLow
+        },
+        contentColor = rowContentColor,
+        tonalElevation = if (isCurrent) 2.dp else 1.dp,
     ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = if (isCurrent) "Now: ${track.name}" else track.name,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = track.trackSummary(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Spacer(modifier = Modifier.width(12.dp))
-        if (activePlaylist != null) {
-            TextButton(onClick = { onAddTrackToPlaylist(activePlaylist, track) }) {
-                Icon(
-                    imageVector = Icons.Filled.Add,
-                    contentDescription = null,
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Text(
+                    text = track.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(text = "Add")
+                Text(
+                    text = track.trackSummary(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = rowContentColor,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            if (activePlaylist != null) {
+                TextButton(onClick = { onAddTrackToPlaylist(activePlaylist, track) }) {
+                    Icon(
+                        imageVector = Icons.Filled.Add,
+                        contentDescription = null,
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "Add")
+                }
             }
         }
     }
@@ -1802,24 +1956,30 @@ private fun resolvedIndexFor(
         .count { playlistEntry -> playlistEntry.track != null } - 1
 }
 
-private fun PlaybackSnapshot.practiceStatus(): String {
-    val queueText = if (currentIndex == null || queueSize == 0) {
-        "No queue"
+private fun currentPlaylistEntryIndex(
+    playlist: ResolvedPlaylist?,
+    playback: PlaybackSnapshot,
+): Int? {
+    val currentIndex = playback.currentIndex ?: return null
+    return playlist?.entries
+        ?.firstOrNull { entry -> resolvedIndexFor(playlist, entry) == currentIndex }
+        ?.index
+}
+
+private fun playerListIndexForEntry(
+    library: LibraryState,
+    entryIndex: Int,
+): Int {
+    val folderRepairItemCount = if (
+        library.tracksFolder?.available != true ||
+        library.playlistsFolder?.available != true
+    ) {
+        1
     } else {
-        "Track ${currentIndex + 1} of $queueSize"
+        0
     }
-    val repetitionText = if (totalRepetitions == 0) {
-        "no repetitions"
-    } else {
-        "rep $currentRepetition of $totalRepetitions"
-    }
-    val callsText = if (hasCalls) "calls available" else "music only"
-    val delayText = if (playbackDelayActive) {
-        "delay ${playbackDelayRemainingSeconds}s"
-    } else {
-        "ready"
-    }
-    return "$queueText - $repetitionText - $callsText - $delayText"
+    val playlistHeaderItemCount = 1
+    return folderRepairItemCount + playlistHeaderItemCount + entryIndex
 }
 
 private fun LibraryDiagnostic.displayText(): String {
@@ -1830,13 +1990,6 @@ private fun LibraryDiagnostic.displayText(): String {
     val file = fileName?.let { " [$it]" }.orEmpty()
     return "$prefix$file: $message"
 }
-
-private fun diagnosticsContentDescription(count: Int): String =
-    if (count == 0) {
-        "Open diagnostics. No issues."
-    } else {
-        "Open diagnostics. $count issue${if (count == 1) "" else "s"}."
-    }
 
 private fun formatDuration(milliseconds: Long): String {
     val totalSeconds = (milliseconds / 1_000L).coerceAtLeast(0L)

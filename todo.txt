@@ -1,9 +1,11 @@
-I should tap a button to switch to a screen that lists playlists. That screen should have a button to create a new playlist. I should be able to tap a playlist to select it or long-press it to edit it.
+The playlist items should be an obvious list that looks clickable. Right now it just looks like a wall of text. Don't include entry numbers.
 
 Instead of prefixing a track with "now" change its color scheme to show it's highlighted.
-
-The playlist items should be an obvious list that looks clickable. Right now it just looks like a wall of text.
 
 Move Diagnostics, Refresh, and Settings into a hamburger menu.
 
 Move the instructions button to the right of the title of the current track.
+
+Pin the player controls to the bottom of the main screen. The current playlist should take up the rest of the vertical space. Any time the track changes, ensure the current track is visible (aka autoscroll to it).
+
+Move auto-mute and count-in delay to a dialog.
