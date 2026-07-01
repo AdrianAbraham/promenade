@@ -19,6 +19,7 @@ import net.shadowspire.promenade2.data.library.LibraryState
 import net.shadowspire.promenade2.data.library.SafLibraryRepository
 import net.shadowspire.promenade2.data.preferences.AppPreferences
 import net.shadowspire.promenade2.data.preferences.PreferencesRepository
+import net.shadowspire.promenade2.data.preferences.ThemePreference
 
 class PromenadeAppState(
     context: Context,
@@ -177,6 +178,12 @@ class PromenadeAppState(
     fun updatePreferences(transform: (AppPreferences) -> AppPreferences) {
         scope.launch {
             preferencesRepository.setPlaybackSettings(transform(preferences).playbackSettings)
+        }
+    }
+
+    fun setThemePreference(themePreference: ThemePreference) {
+        scope.launch {
+            preferencesRepository.setThemePreference(themePreference)
         }
     }
 

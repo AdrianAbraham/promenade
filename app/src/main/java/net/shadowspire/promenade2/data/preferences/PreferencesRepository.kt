@@ -28,6 +28,7 @@ class PreferencesRepository(context: Context) {
             lastPlaylistId = values[Keys.LastPlaylistId]?.let(::PlaylistId),
             lastPlaylistEntryIndex = values[Keys.LastPlaylistEntryIndex]?.takeIf { index -> index >= 0 },
             lastTrackId = values[Keys.LastTrackId]?.let(::TrackId),
+            themePreference = values[Keys.ThemePreference]?.toThemePreference() ?: ThemePreference.System,
             playbackSettings = PlaybackSettings(
                 balance = values[Keys.Balance] ?: PlaybackSettings.DEFAULT_BALANCE,
                 callsMuted = values[Keys.CallsMuted] ?: false,
@@ -51,6 +52,12 @@ class PreferencesRepository(context: Context) {
     suspend fun setPlaylistsFolder(folder: FolderRef?) {
         dataStore.edit { values ->
             values.setFolderRef(Keys.PlaylistsFolderName, Keys.PlaylistsFolderUri, folder)
+        }
+    }
+
+    suspend fun setThemePreference(themePreference: ThemePreference) {
+        dataStore.edit { values ->
+            values[Keys.ThemePreference] = themePreference.name
         }
     }
 
@@ -127,6 +134,9 @@ class PreferencesRepository(context: Context) {
     private fun Int?.positiveOrNull(): Int? =
         this?.takeIf { value -> value > 0 }
 
+    private fun String.toThemePreference(): ThemePreference? =
+        ThemePreference.entries.firstOrNull { preference -> preference.name == this }
+
     private object Keys {
         val TracksFolderName = stringPreferencesKey("tracks_folder_name")
         val TracksFolderUri = stringPreferencesKey("tracks_folder_uri")
@@ -135,6 +145,7 @@ class PreferencesRepository(context: Context) {
         val LastPlaylistId = stringPreferencesKey("last_playlist_id")
         val LastPlaylistEntryIndex = intPreferencesKey("last_playlist_entry_index")
         val LastTrackId = stringPreferencesKey("last_track_id")
+        val ThemePreference = stringPreferencesKey("theme_preference")
         val Balance = floatPreferencesKey("playback_balance")
         val CallsMuted = booleanPreferencesKey("calls_muted")
         val MuteAfterRepetition = intPreferencesKey("auto_mute_after_repetition")

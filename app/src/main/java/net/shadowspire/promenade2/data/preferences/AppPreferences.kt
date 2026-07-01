@@ -11,5 +11,12 @@ data class AppPreferences(
     val lastPlaylistId: PlaylistId? = null,
     val lastPlaylistEntryIndex: Int? = null,
     val lastTrackId: TrackId? = null,
+    val themePreference: ThemePreference = ThemePreference.System,
     val playbackSettings: PlaybackSettings = PlaybackSettings(),
 )
+
+enum class ThemePreference {
+    System,
+    Light,
+    Dark,
+}

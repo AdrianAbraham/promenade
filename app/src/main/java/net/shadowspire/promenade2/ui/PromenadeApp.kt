@@ -13,6 +13,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -64,6 +65,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -102,6 +105,7 @@ import net.shadowspire.promenade2.data.library.LibraryState
 import net.shadowspire.promenade2.data.playlist.PlaylistEntryResolution
 import net.shadowspire.promenade2.data.playlist.ResolvedPlaylist
 import net.shadowspire.promenade2.data.preferences.AppPreferences
+import net.shadowspire.promenade2.data.preferences.ThemePreference
 import net.shadowspire.promenade2.domain.instructions.MarkdownBlock
 import net.shadowspire.promenade2.domain.instructions.MarkdownInline
 import net.shadowspire.promenade2.domain.instructions.MarkdownInstructionDocument
@@ -111,112 +115,115 @@ import net.shadowspire.promenade2.playback.PromenadeControllerConnection
 
 @Composable
 fun PromenadeApp() {
-    MaterialTheme {
-        Surface(modifier = Modifier.fillMaxSize()) {
-            val context = LocalContext.current
-            val scope = rememberCoroutineScope()
-            val connection = remember {
-                PromenadeControllerConnection(context.applicationContext)
-            }
-            val appState = remember {
-                PromenadeAppState(context.applicationContext, scope)
-            }
-            val playback by connection.snapshot.collectAsStateWithLifecycle()
-            val library by appState.libraryState.collectAsStateWithLifecycle()
-            val preferences by appState.preferencesState.collectAsStateWithLifecycle()
-            val activePlaylistId by appState.activePlaylistId.collectAsStateWithLifecycle()
-            val activePlaylist = library.playlists.firstOrNull { playlist ->
-                playlist.playlist.id == activePlaylistId
-            }
-            var destinationName by rememberSaveable {
-                mutableStateOf(PromenadeDestination.Player.name)
-            }
-            var settingsOpen by rememberSaveable {
-                mutableStateOf(false)
-            }
-            var checkedInitialFolderSetup by rememberSaveable {
-                mutableStateOf(false)
-            }
-            var editingPlaylistFileName by rememberSaveable {
-                mutableStateOf<String?>(null)
-            }
-            val destination = PromenadeDestination.valueOf(destinationName)
-            val editingPlaylist = library.playlists.firstOrNull { playlist ->
-                playlist.playlist.id.fileName == editingPlaylistFileName
-            }
-            val currentTrack = currentTrackFor(
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val connection = remember {
+        PromenadeControllerConnection(context.applicationContext)
+    }
+    val appState = remember {
+        PromenadeAppState(context.applicationContext, scope)
+    }
+    val playback by connection.snapshot.collectAsStateWithLifecycle()
+    val library by appState.libraryState.collectAsStateWithLifecycle()
+    val preferences by appState.preferencesState.collectAsStateWithLifecycle()
+    val activePlaylistId by appState.activePlaylistId.collectAsStateWithLifecycle()
+    val activePlaylist = library.playlists.firstOrNull { playlist ->
+        playlist.playlist.id == activePlaylistId
+    }
+    var destinationName by rememberSaveable {
+        mutableStateOf(PromenadeDestination.Player.name)
+    }
+    var settingsOpen by rememberSaveable {
+        mutableStateOf(false)
+    }
+    var checkedInitialFolderSetup by rememberSaveable {
+        mutableStateOf(false)
+    }
+    var editingPlaylistFileName by rememberSaveable {
+        mutableStateOf<String?>(null)
+    }
+    val destination = PromenadeDestination.valueOf(destinationName)
+    val editingPlaylist = library.playlists.firstOrNull { playlist ->
+        playlist.playlist.id.fileName == editingPlaylistFileName
+    }
+    val currentTrack = currentTrackFor(
+        library = library,
+        activePlaylist = activePlaylist,
+        playback = playback,
+    )
+    var restoredInitialSelection by rememberSaveable {
+        mutableStateOf(false)
+    }
+    val tracksFolderPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        if (uri != null) {
+            appState.setTracksFolder(uri)
+        }
+    }
+    val playlistsFolderPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        if (uri != null) {
+            appState.setPlaylistsFolder(uri)
+        }
+    }
+
+    DisposableEffect(connection, appState) {
+        connection.connect()
+        appState.start()
+        onDispose {
+            appState.stop()
+            connection.disconnect()
+        }
+    }
+
+    LaunchedEffect(playback.isConnected, preferences.playbackSettings) {
+        if (playback.isConnected) {
+            connection.setBalance(preferences.playbackSettings.balance)
+            connection.setCallsMuted(preferences.playbackSettings.callsMuted)
+            connection.setAutoMute(preferences.playbackSettings.autoMute)
+            connection.setPlaybackDelay(preferences.playbackSettings.playbackDelay)
+        }
+    }
+
+    LaunchedEffect(
+        playback.isConnected,
+        library.isScanning,
+        library.playlists,
+        library.tracks,
+        preferences.lastPlaylistId,
+        preferences.lastPlaylistEntryIndex,
+        preferences.lastTrackId,
+    ) {
+        if (playback.isConnected && !library.isScanning && !restoredInitialSelection) {
+            restoreLastLoadedSelection(
+                preferences = preferences,
                 library = library,
-                activePlaylist = activePlaylist,
-                playback = playback,
+                connection = connection,
             )
-            var restoredInitialSelection by rememberSaveable {
-                mutableStateOf(false)
-            }
-            val tracksFolderPicker = rememberLauncherForActivityResult(
-                ActivityResultContracts.OpenDocumentTree(),
-            ) { uri ->
-                if (uri != null) {
-                    appState.setTracksFolder(uri)
-                }
-            }
-            val playlistsFolderPicker = rememberLauncherForActivityResult(
-                ActivityResultContracts.OpenDocumentTree(),
-            ) { uri ->
-                if (uri != null) {
-                    appState.setPlaylistsFolder(uri)
-                }
-            }
+            restoredInitialSelection = true
+        }
+    }
 
-            DisposableEffect(connection, appState) {
-                connection.connect()
-                appState.start()
-                onDispose {
-                    appState.stop()
-                    connection.disconnect()
-                }
+    LaunchedEffect(
+        library.isScanning,
+        preferences.tracksFolder,
+        preferences.playlistsFolder,
+    ) {
+        if (!library.isScanning && !checkedInitialFolderSetup) {
+            checkedInitialFolderSetup = true
+            if (preferences.tracksFolder == null || preferences.playlistsFolder == null) {
+                settingsOpen = true
             }
+        }
+    }
 
-            LaunchedEffect(playback.isConnected, preferences.playbackSettings) {
-                if (playback.isConnected) {
-                    connection.setBalance(preferences.playbackSettings.balance)
-                    connection.setCallsMuted(preferences.playbackSettings.callsMuted)
-                    connection.setAutoMute(preferences.playbackSettings.autoMute)
-                    connection.setPlaybackDelay(preferences.playbackSettings.playbackDelay)
-                }
-            }
-
-            LaunchedEffect(
-                playback.isConnected,
-                library.isScanning,
-                library.playlists,
-                library.tracks,
-                preferences.lastPlaylistId,
-                preferences.lastPlaylistEntryIndex,
-                preferences.lastTrackId,
-            ) {
-                if (playback.isConnected && !library.isScanning && !restoredInitialSelection) {
-                    restoreLastLoadedSelection(
-                        preferences = preferences,
-                        library = library,
-                        connection = connection,
-                    )
-                    restoredInitialSelection = true
-                }
-            }
-
-            LaunchedEffect(
-                library.isScanning,
-                preferences.tracksFolder,
-                preferences.playlistsFolder,
-            ) {
-                if (!library.isScanning && !checkedInitialFolderSetup) {
-                    checkedInitialFolderSetup = true
-                    if (preferences.tracksFolder == null || preferences.playlistsFolder == null) {
-                        settingsOpen = true
-                    }
-                }
-            }
-
+    val useDarkTheme = preferences.themePreference.useDarkTheme(isSystemInDarkTheme())
+    MaterialTheme(
+        colorScheme = if (useDarkTheme) darkColorScheme() else lightColorScheme(),
+    ) {
+        Surface(modifier = Modifier.fillMaxSize()) {
             PromenadeScreen(
                 destination = destination,
                 playback = playback,
@@ -232,6 +239,7 @@ fun PromenadeApp() {
                 onNavigateToDiagnostics = { destinationName = PromenadeDestination.Diagnostics.name },
                 settingsOpen = settingsOpen,
                 onDismissSettings = { settingsOpen = false },
+                onSetThemePreference = appState::setThemePreference,
                 onChooseTracksFolder = { tracksFolderPicker.launch(null) },
                 onChoosePlaylistsFolder = { playlistsFolderPicker.launch(null) },
                 onRescan = appState::rescan,
@@ -399,6 +407,7 @@ private fun PromenadeScreen(
     onNavigateToDiagnostics: () -> Unit,
     settingsOpen: Boolean,
     onDismissSettings: () -> Unit,
+    onSetThemePreference: (ThemePreference) -> Unit,
     onChooseTracksFolder: () -> Unit,
     onChoosePlaylistsFolder: () -> Unit,
     onRescan: () -> Unit,
@@ -656,8 +665,10 @@ private fun PromenadeScreen(
 
     if (settingsOpen) {
         SettingsDialog(
+            preferences = preferences,
             library = library,
             onDismiss = onDismissSettings,
+            onSetThemePreference = onSetThemePreference,
             onChooseTracksFolder = onChooseTracksFolder,
             onChoosePlaylistsFolder = onChoosePlaylistsFolder,
         )
@@ -865,8 +876,10 @@ private fun PracticeSettingsDialog(
 
 @Composable
 private fun SettingsDialog(
+    preferences: AppPreferences,
     library: LibraryState,
     onDismiss: () -> Unit,
+    onSetThemePreference: (ThemePreference) -> Unit,
     onChooseTracksFolder: () -> Unit,
     onChoosePlaylistsFolder: () -> Unit,
 ) {
@@ -880,6 +893,10 @@ private fun SettingsDialog(
         title = { Text(text = "Settings") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                ThemePreferenceControls(
+                    themePreference = preferences.themePreference,
+                    onSetThemePreference = onSetThemePreference,
+                )
                 FolderSetupSection(
                     library = library,
                     onChooseTracksFolder = onChooseTracksFolder,
@@ -890,6 +907,20 @@ private fun SettingsDialog(
                 }
             }
         },
+    )
+}
+
+@Composable
+private fun ThemePreferenceControls(
+    themePreference: ThemePreference,
+    onSetThemePreference: (ThemePreference) -> Unit,
+) {
+    SettingDropdown(
+        label = "Theme",
+        selectedText = themePreference.displayText(),
+        options = themePreferenceOptions,
+        selectedValue = themePreference,
+        onOptionSelected = onSetThemePreference,
     )
 }
 
@@ -2089,6 +2120,20 @@ private fun PlaybackDelaySettings.displayText(): String = delayLabel(delaySecond
 private fun AutoMuteSettings.displayText(): String =
     autoMuteOptions.firstOrNull { option -> option.value == this }?.label ?: "Custom"
 
+private fun ThemePreference.displayText(): String =
+    when (this) {
+        ThemePreference.System -> "System"
+        ThemePreference.Light -> "Light"
+        ThemePreference.Dark -> "Dark"
+    }
+
+private fun ThemePreference.useDarkTheme(systemInDarkTheme: Boolean): Boolean =
+    when (this) {
+        ThemePreference.System -> systemInDarkTheme
+        ThemePreference.Light -> false
+        ThemePreference.Dark -> true
+    }
+
 private fun delayLabel(seconds: Int): String =
     if (seconds == 0) {
         "Off"
@@ -2117,6 +2162,20 @@ private data class SettingDropdownOption<T>(
 
 private const val EXIT_BACK_PRESS_WINDOW_MS = 2_000L
 private const val MAX_VISIBLE_DIAGNOSTICS = 8
+private val themePreferenceOptions = listOf(
+    SettingDropdownOption(
+        label = "System",
+        value = ThemePreference.System,
+    ),
+    SettingDropdownOption(
+        label = "Light",
+        value = ThemePreference.Light,
+    ),
+    SettingDropdownOption(
+        label = "Dark",
+        value = ThemePreference.Dark,
+    ),
+)
 private val delayOptions = listOf(0, 3, 5, 10)
 private val autoMuteOptions = listOf(
     SettingDropdownOption(
