@@ -671,6 +671,7 @@ private fun PromenadeScreen(
                                     playlist = editingPlaylist,
                                     tracks = library.tracks,
                                     playback = playback,
+                                    onDone = onDismissEditingPlaylist,
                                     onLoadPlaylistEntry = onLoadPlaylistEntry,
                                     onAddTrackToPlaylist = onAddTrackToPlaylist,
                                     onRemovePlaylistEntry = onRemovePlaylistEntry,
@@ -1143,6 +1144,7 @@ private fun PlaylistEditorScreenContent(
     playlist: ResolvedPlaylist,
     tracks: List<Track>,
     playback: PlaybackSnapshot,
+    onDone: () -> Unit,
     onLoadPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
     onAddTrackToPlaylist: (Playlist, Track) -> Unit,
     onRemovePlaylistEntry: (Playlist, Int) -> Unit,
@@ -1173,17 +1175,26 @@ private fun PlaylistEditorScreenContent(
             Spacer(modifier = Modifier.width(8.dp))
             Text(text = "Add Track")
         }
-        TextButton(onClick = { onRequestDeletePlaylist(playlist) }) {
-            Icon(
-                imageVector = Icons.Filled.Delete,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.error,
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = "Delete Playlist",
-                color = MaterialTheme.colorScheme.error,
-            )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = { onRequestDeletePlaylist(playlist) }) {
+                Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Delete Playlist",
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            Button(onClick = onDone) {
+                Text(text = "Done")
+            }
         }
     }
 
