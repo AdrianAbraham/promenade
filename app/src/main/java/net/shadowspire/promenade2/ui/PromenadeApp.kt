@@ -17,8 +17,6 @@ import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -245,11 +243,17 @@ fun PromenadeApp() {
                 currentTrack = currentTrack,
                 editingPlaylist = editingPlaylist,
                 onNavigateToPlayer = { destinationName = PromenadeDestination.Player.name },
-                onNavigateToPlaylists = { destinationName = PromenadeDestination.Playlists.name },
+                onNavigateToPlaylists = {
+                    editingPlaylistFileName = null
+                    destinationName = PromenadeDestination.Playlists.name
+                },
                 onNavigateToSettings = { settingsOpen = true },
                 onNavigateToInstructions = { destinationName = PromenadeDestination.Instructions.name },
                 onNavigateToDiagnostics = { destinationName = PromenadeDestination.Diagnostics.name },
-                onDismissEditingPlaylist = { editingPlaylistFileName = null },
+                onDismissEditingPlaylist = {
+                    editingPlaylistFileName = null
+                    destinationName = PromenadeDestination.Playlists.name
+                },
                 settingsOpen = settingsOpen,
                 onDismissSettings = { settingsOpen = false },
                 onSetThemePreference = appState::setThemePreference,
@@ -260,6 +264,7 @@ fun PromenadeApp() {
                 onDeletePlaylist = { playlistId ->
                     if (editingPlaylistFileName == playlistId.fileName) {
                         editingPlaylistFileName = null
+                        destinationName = PromenadeDestination.Playlists.name
                     }
                     appState.deletePlaylist(playlistId)
                 },
@@ -274,14 +279,7 @@ fun PromenadeApp() {
                 },
                 onEditPlaylist = { playlist ->
                     editingPlaylistFileName = playlist.playlist.id.fileName
-                },
-                onLoadPlaylist = { playlist ->
-                    appState.selectPlaylist(playlist.playlist.id)
-                    appState.saveLastPlaylistSelection(playlist.playlist.id, entryIndex = 0)
-                    val resolvedTracks = playlist.resolvedTracks
-                    if (resolvedTracks.isNotEmpty()) {
-                        connection.loadQueue(resolvedTracks, startIndex = 0, autoplay = false)
-                    }
+                    destinationName = PromenadeDestination.PlaylistEditor.name
                 },
                 onLoadPlaylistEntry = { playlist, entry ->
                     val track = entry.track
@@ -358,6 +356,7 @@ fun PromenadeApp() {
 private enum class PromenadeDestination {
     Player,
     Playlists,
+    PlaylistEditor,
     Instructions,
     Diagnostics,
 }
@@ -434,7 +433,6 @@ private fun PromenadeScreen(
     onSelectPlaylist: (ResolvedPlaylist) -> Unit,
     onEditPlaylist: (ResolvedPlaylist) -> Unit,
     onDeletePlaylist: (PlaylistId) -> Unit,
-    onLoadPlaylist: (ResolvedPlaylist) -> Unit,
     onLoadPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
     onAddTrackToPlaylist: (Playlist, Track) -> Unit,
     onRemovePlaylistEntry: (Playlist, Int) -> Unit,
@@ -461,7 +459,7 @@ private fun PromenadeScreen(
     val deletingPlaylist = deletingPlaylistFileName?.let { fileName ->
         library.playlists.firstOrNull { playlist -> playlist.playlist.id.fileName == fileName }
     }
-    val dialogOpen = settingsOpen || practiceSettingsOpen || editingPlaylist != null || deletingPlaylist != null
+    val dialogOpen = settingsOpen || practiceSettingsOpen || deletingPlaylist != null
 
     BackHandler(enabled = destination == PromenadeDestination.Player && !dialogOpen) {
         val now = SystemClock.elapsedRealtime()
@@ -473,7 +471,15 @@ private fun PromenadeScreen(
         }
     }
 
-    BackHandler(enabled = destination != PromenadeDestination.Player && !dialogOpen) {
+    BackHandler(enabled = destination == PromenadeDestination.PlaylistEditor && !dialogOpen) {
+        onDismissEditingPlaylist()
+    }
+
+    BackHandler(
+        enabled = destination != PromenadeDestination.Player &&
+            destination != PromenadeDestination.PlaylistEditor &&
+            !dialogOpen,
+    ) {
         onNavigateToPlayer()
     }
 
@@ -500,6 +506,7 @@ private fun PromenadeScreen(
                         text = when (destination) {
                             PromenadeDestination.Player -> activePlaylist?.playlist?.name ?: "Tracks"
                             PromenadeDestination.Playlists -> "Playlists"
+                            PromenadeDestination.PlaylistEditor -> editingPlaylist?.playlist?.name ?: "Edit Playlist"
                             PromenadeDestination.Instructions -> "Instructions"
                             PromenadeDestination.Diagnostics -> "Diagnostics"
                         },
@@ -655,6 +662,27 @@ private fun PromenadeScreen(
                         )
                     }
 
+                    PromenadeDestination.PlaylistEditor -> {
+                        item {
+                            if (editingPlaylist == null) {
+                                MissingPlaylistEditorContent(onNavigateToPlaylists = onDismissEditingPlaylist)
+                            } else {
+                                PlaylistEditorScreenContent(
+                                    playlist = editingPlaylist,
+                                    tracks = library.tracks,
+                                    playback = playback,
+                                    onLoadPlaylistEntry = onLoadPlaylistEntry,
+                                    onAddTrackToPlaylist = onAddTrackToPlaylist,
+                                    onRemovePlaylistEntry = onRemovePlaylistEntry,
+                                    onMovePlaylistEntry = onMovePlaylistEntry,
+                                    onRequestDeletePlaylist = { playlist ->
+                                        deletingPlaylistFileName = playlist.playlist.id.fileName
+                                    },
+                                )
+                            }
+                        }
+                    }
+
                     PromenadeDestination.Instructions -> {
                         item {
                             InstructionsScreen(currentTrack = currentTrack)
@@ -688,23 +716,6 @@ private fun PromenadeScreen(
             onSetThemePreference = onSetThemePreference,
             onChooseTracksFolder = onChooseTracksFolder,
             onChoosePlaylistsFolder = onChoosePlaylistsFolder,
-        )
-    }
-
-    if (editingPlaylist != null) {
-        PlaylistEditorDialog(
-            playlist = editingPlaylist,
-            tracks = library.tracks,
-            playback = playback,
-            onDismiss = onDismissEditingPlaylist,
-            onLoadPlaylist = onLoadPlaylist,
-            onLoadPlaylistEntry = onLoadPlaylistEntry,
-            onAddTrackToPlaylist = onAddTrackToPlaylist,
-            onRemovePlaylistEntry = onRemovePlaylistEntry,
-            onMovePlaylistEntry = onMovePlaylistEntry,
-            onRequestDeletePlaylist = { playlist ->
-                deletingPlaylistFileName = playlist.playlist.id.fileName
-            },
         )
     }
 
@@ -1112,12 +1123,26 @@ private fun PlaylistPickerRow(
 }
 
 @Composable
-private fun PlaylistEditorDialog(
+private fun MissingPlaylistEditorContent(
+    onNavigateToPlaylists: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            text = "Playlist not found.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedButton(onClick = onNavigateToPlaylists) {
+            Text(text = "Back to Playlists")
+        }
+    }
+}
+
+@Composable
+private fun PlaylistEditorScreenContent(
     playlist: ResolvedPlaylist,
     tracks: List<Track>,
     playback: PlaybackSnapshot,
-    onDismiss: () -> Unit,
-    onLoadPlaylist: (ResolvedPlaylist) -> Unit,
     onLoadPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
     onAddTrackToPlaylist: (Playlist, Track) -> Unit,
     onRemovePlaylistEntry: (Playlist, Int) -> Unit,
@@ -1128,59 +1153,39 @@ private fun PlaylistEditorDialog(
         mutableStateOf(false)
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(text = "Done")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = { onRequestDeletePlaylist(playlist) }) {
-                Text(
-                    text = "Delete Playlist",
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-        },
-        title = {
-            Text(
-                text = playlist.playlist.name,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        ActivePlaylistEditor(
+            playlist = playlist,
+            playback = playback,
+            onLoadPlaylistEntry = onLoadPlaylistEntry,
+            onRemovePlaylistEntry = onRemovePlaylistEntry,
+            onMovePlaylistEntry = onMovePlaylistEntry,
+        )
+        Button(
+            onClick = { addTrackPickerOpen = true },
+            enabled = tracks.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Add,
+                contentDescription = null,
             )
-        },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = PLAYLIST_EDITOR_DIALOG_MAX_HEIGHT)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                ActivePlaylistEditor(
-                    playlist = playlist,
-                    playback = playback,
-                    onLoadPlaylist = onLoadPlaylist,
-                    onLoadPlaylistEntry = onLoadPlaylistEntry,
-                    onRemovePlaylistEntry = onRemovePlaylistEntry,
-                    onMovePlaylistEntry = onMovePlaylistEntry,
-                )
-                Button(
-                    onClick = { addTrackPickerOpen = true },
-                    enabled = tracks.isNotEmpty(),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Add,
-                        contentDescription = null,
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = "Add Track")
-                }
-            }
-        },
-    )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(text = "Add Track")
+        }
+        TextButton(onClick = { onRequestDeletePlaylist(playlist) }) {
+            Icon(
+                imageVector = Icons.Filled.Delete,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Delete Playlist",
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+    }
 
     if (addTrackPickerOpen) {
         AddTrackDialog(
@@ -1324,28 +1329,15 @@ private fun DeletePlaylistConfirmationDialog(
 private fun ActivePlaylistEditor(
     playlist: ResolvedPlaylist,
     playback: PlaybackSnapshot,
-    onLoadPlaylist: (ResolvedPlaylist) -> Unit,
     onLoadPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
     onRemovePlaylistEntry: (Playlist, Int) -> Unit,
     onMovePlaylistEntry: (Playlist, Int, Int) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            SectionHeader(
-                title = "Tracks",
-                supportingText = "Duplicate and unresolved entries are preserved.",
-            )
-            OutlinedButton(
-                onClick = { onLoadPlaylist(playlist) },
-                enabled = playlist.resolvedTracks.isNotEmpty(),
-            ) {
-                Text(text = "Load")
-            }
-        }
+        SectionHeader(
+            title = "Tracks",
+            supportingText = "Duplicate and unresolved entries are preserved.",
+        )
         if (playlist.entries.isEmpty()) {
             Text(
                 text = "Use Add Track below to add tracks.",
@@ -2507,7 +2499,6 @@ private data class SettingDropdownOption<T>(
 
 private val PLAYLIST_ENTRY_ROW_SPACING = 10.dp
 private val PLAYLIST_ENTRY_DRAG_ELEVATION = 8.dp
-private val PLAYLIST_EDITOR_DIALOG_MAX_HEIGHT = 460.dp
 private val ADD_TRACK_DIALOG_LIST_MAX_HEIGHT = 420.dp
 private const val EXIT_BACK_PRESS_WINDOW_MS = 2_000L
 private const val MAX_VISIBLE_DIAGNOSTICS = 8
