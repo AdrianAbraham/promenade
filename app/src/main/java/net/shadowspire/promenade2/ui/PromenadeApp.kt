@@ -13,6 +13,9 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +26,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -35,9 +39,9 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -71,6 +75,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -78,7 +83,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
@@ -89,6 +97,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -1135,17 +1144,131 @@ private fun ActivePlaylistEditor(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else {
-            playlist.entries.forEach { entry ->
-                PlaylistEntryRow(
-                    playlist = playlist.playlist,
-                    entry = entry,
-                    isCurrent = playback.currentIndex == resolvedIndexFor(playlist, entry),
-                    showSummary = true,
-                    onLoadPlaylistEntry = { onLoadPlaylistEntry(playlist, entry) },
-                    onRemovePlaylistEntry = onRemovePlaylistEntry,
-                    onMovePlaylistEntry = onMovePlaylistEntry,
-                )
+            ReorderablePlaylistEntryList(
+                playlist = playlist,
+                playback = playback,
+                onLoadPlaylistEntry = onLoadPlaylistEntry,
+                onRemovePlaylistEntry = onRemovePlaylistEntry,
+                onMovePlaylistEntry = onMovePlaylistEntry,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReorderablePlaylistEntryList(
+    playlist: ResolvedPlaylist,
+    playback: PlaybackSnapshot,
+    onLoadPlaylistEntry: (ResolvedPlaylist, PlaylistEntryResolution) -> Unit,
+    onRemovePlaylistEntry: (Playlist, Int) -> Unit,
+    onMovePlaylistEntry: (Playlist, Int, Int) -> Unit,
+) {
+    val entrySignature = playlist.entries.joinToString(separator = "|") { entry ->
+        "${entry.index}:${entry.trackId.jsonFileName}"
+    }
+    val spacingPx = with(LocalDensity.current) {
+        PLAYLIST_ENTRY_ROW_SPACING.toPx()
+    }
+    val rowHeights = remember(playlist.playlist.id, entrySignature) {
+        mutableStateMapOf<Int, Int>()
+    }
+    var visibleEntries by remember(playlist.playlist.id, entrySignature) {
+        mutableStateOf(playlist.entries)
+    }
+    var draggingEntryIndex by remember(playlist.playlist.id, entrySignature) {
+        mutableStateOf<Int?>(null)
+    }
+    var dragOffsetY by remember(playlist.playlist.id, entrySignature) {
+        mutableStateOf(0f)
+    }
+
+    fun resetDrag() {
+        draggingEntryIndex = null
+        dragOffsetY = 0f
+    }
+
+    fun distanceBetweenEntries(
+        fromIndex: Int,
+        toIndex: Int,
+    ): Float {
+        val fromEntry = visibleEntries.getOrNull(fromIndex) ?: return 0f
+        val toEntry = visibleEntries.getOrNull(toIndex) ?: return 0f
+        val fromHeight = rowHeights[fromEntry.index]?.toFloat() ?: return 0f
+        val toHeight = rowHeights[toEntry.index]?.toFloat() ?: fromHeight
+        return ((fromHeight + toHeight) / 2f) + spacingPx
+    }
+
+    fun dragBy(deltaY: Float) {
+        val draggedEntry = draggingEntryIndex ?: return
+        dragOffsetY += deltaY
+        var currentIndex = visibleEntries.indexOfFirst { entry -> entry.index == draggedEntry }
+        if (currentIndex < 0) {
+            return
+        }
+        while (currentIndex < visibleEntries.lastIndex) {
+            val distance = distanceBetweenEntries(currentIndex, currentIndex + 1)
+            if (distance <= 0f || dragOffsetY <= distance / 2f) {
+                break
             }
+            visibleEntries = visibleEntries.moved(currentIndex, currentIndex + 1)
+            dragOffsetY -= distance
+            currentIndex += 1
+        }
+        while (currentIndex > 0) {
+            val distance = distanceBetweenEntries(currentIndex, currentIndex - 1)
+            if (distance <= 0f || dragOffsetY >= -distance / 2f) {
+                break
+            }
+            visibleEntries = visibleEntries.moved(currentIndex, currentIndex - 1)
+            dragOffsetY += distance
+            currentIndex -= 1
+        }
+    }
+
+    fun finishDrag() {
+        val fromIndex = draggingEntryIndex
+        val toIndex = fromIndex?.let { entryIndex ->
+            visibleEntries.indexOfFirst { entry -> entry.index == entryIndex }
+        } ?: -1
+        resetDrag()
+        if (fromIndex != null && toIndex >= 0 && fromIndex != toIndex) {
+            onMovePlaylistEntry(playlist.playlist, fromIndex, toIndex)
+        } else {
+            visibleEntries = playlist.entries
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(PLAYLIST_ENTRY_ROW_SPACING)) {
+        visibleEntries.forEach { entry ->
+            val isDragging = draggingEntryIndex == entry.index
+            PlaylistEntryRow(
+                playlist = playlist.playlist,
+                entry = entry,
+                isCurrent = playback.currentIndex == resolvedIndexFor(playlist, entry),
+                showSummary = true,
+                onLoadPlaylistEntry = { onLoadPlaylistEntry(playlist, entry) },
+                onRemovePlaylistEntry = onRemovePlaylistEntry,
+                dragHandleModifier = Modifier.draggable(
+                    orientation = Orientation.Vertical,
+                    state = rememberDraggableState { deltaY ->
+                        dragBy(deltaY)
+                    },
+                    onDragStarted = {
+                        draggingEntryIndex = entry.index
+                        dragOffsetY = 0f
+                    },
+                    onDragStopped = {
+                        finishDrag()
+                    },
+                ),
+                modifier = Modifier
+                    .onSizeChanged { size -> rowHeights[entry.index] = size.height }
+                    .zIndex(if (isDragging) 1f else 0f)
+                    .graphicsLayer {
+                        translationY = if (isDragging) dragOffsetY else 0f
+                        shadowElevation = if (isDragging) PLAYLIST_ENTRY_DRAG_ELEVATION.toPx() else 0f
+                    },
+            )
         }
     }
 }
@@ -1158,7 +1281,8 @@ private fun PlaylistEntryRow(
     showSummary: Boolean,
     onLoadPlaylistEntry: () -> Unit,
     onRemovePlaylistEntry: ((Playlist, Int) -> Unit)?,
-    onMovePlaylistEntry: ((Playlist, Int, Int) -> Unit)?,
+    dragHandleModifier: Modifier? = null,
+    modifier: Modifier = Modifier,
 ) {
     val rowColor = when {
         entry.track == null -> MaterialTheme.colorScheme.errorContainer
@@ -1170,15 +1294,16 @@ private fun PlaylistEntryRow(
         isCurrent -> MaterialTheme.colorScheme.onPrimaryContainer
         else -> MaterialTheme.colorScheme.onSurface
     }
+    val loadModifier = Modifier.clickable(
+        enabled = entry.track != null,
+        onClickLabel = "Load playlist entry paused",
+        onClick = onLoadPlaylistEntry,
+    )
 
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .clickable(
-                enabled = entry.track != null,
-                onClickLabel = "Load playlist entry paused",
-                onClick = onLoadPlaylistEntry,
-            )
+            .then(if (dragHandleModifier == null) loadModifier else Modifier)
             .semantics {
                 contentDescription = if (entry.track == null) {
                     "Missing playlist entry ${entry.trackId.jsonFileName}"
@@ -1197,8 +1322,27 @@ private fun PlaylistEntryRow(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (dragHandleModifier != null) {
+                Box(
+                    modifier = dragHandleModifier
+                        .size(44.dp)
+                        .semantics {
+                            contentDescription = "Drag to reorder playlist entry"
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.DragHandle,
+                        contentDescription = null,
+                        tint = rowContentColor,
+                    )
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+            }
             Column(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .then(if (dragHandleModifier != null) loadModifier else Modifier),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
@@ -1219,26 +1363,6 @@ private fun PlaylistEntryRow(
                 }
             }
             Spacer(modifier = Modifier.width(8.dp))
-            if (onMovePlaylistEntry != null) {
-                IconButton(
-                    onClick = { onMovePlaylistEntry(playlist, entry.index, entry.index - 1) },
-                    enabled = entry.index > 0,
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.KeyboardArrowUp,
-                        contentDescription = "Move entry up",
-                    )
-                }
-                IconButton(
-                    onClick = { onMovePlaylistEntry(playlist, entry.index, entry.index + 1) },
-                    enabled = entry.index < playlist.entries.lastIndex,
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.KeyboardArrowDown,
-                        contentDescription = "Move entry down",
-                    )
-                }
-            }
             if (onRemovePlaylistEntry != null) {
                 IconButton(onClick = { onRemovePlaylistEntry(playlist, entry.index) }) {
                     Icon(
@@ -1278,7 +1402,6 @@ private fun androidx.compose.foundation.lazy.LazyListScope.playlistEntryItems(
                 showSummary = onRemovePlaylistEntry != null || onMovePlaylistEntry != null,
                 onLoadPlaylistEntry = { onLoadPlaylistEntry(playlist, entry) },
                 onRemovePlaylistEntry = onRemovePlaylistEntry,
-                onMovePlaylistEntry = onMovePlaylistEntry,
             )
         }
     }
@@ -2120,6 +2243,19 @@ private fun PlaybackDelaySettings.displayText(): String = delayLabel(delaySecond
 private fun AutoMuteSettings.displayText(): String =
     autoMuteOptions.firstOrNull { option -> option.value == this }?.label ?: "Custom"
 
+private fun <T> List<T>.moved(
+    fromIndex: Int,
+    toIndex: Int,
+): List<T> {
+    if (fromIndex !in indices || toIndex !in indices || fromIndex == toIndex) {
+        return this
+    }
+    return toMutableList().apply {
+        val movedItem = removeAt(fromIndex)
+        add(toIndex, movedItem)
+    }
+}
+
 private fun ThemePreference.displayText(): String =
     when (this) {
         ThemePreference.System -> "System"
@@ -2160,6 +2296,8 @@ private data class SettingDropdownOption<T>(
     val value: T,
 )
 
+private val PLAYLIST_ENTRY_ROW_SPACING = 10.dp
+private val PLAYLIST_ENTRY_DRAG_ELEVATION = 8.dp
 private const val EXIT_BACK_PRESS_WINDOW_MS = 2_000L
 private const val MAX_VISIBLE_DIAGNOSTICS = 8
 private val themePreferenceOptions = listOf(
