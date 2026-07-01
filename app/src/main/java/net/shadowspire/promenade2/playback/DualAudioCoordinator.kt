@@ -31,6 +31,9 @@ class DualAudioCoordinator(
     private var repetitionStarts = DoubleArray(0)
     private var callsLoaded = false
     private var driftJob: Job? = null
+    private var delayJob: Job? = null
+    private var pausingForDelay = false
+    private var skipNextDelayStart = false
 
     fun attach() {
         musicPlayer.addListener(this)
@@ -40,6 +43,7 @@ class DualAudioCoordinator(
     }
 
     fun release() {
+        cancelPlaybackDelay()
         driftJob?.cancel()
         musicPlayer.removeListener(this)
         callsPlayer.release()
@@ -62,9 +66,13 @@ class DualAudioCoordinator(
 
     fun setPlaybackDelay(settings: PlaybackDelaySettings) {
         playbackDelaySettings = settings
+        if (!settings.isEnabled) {
+            cancelPlaybackDelay()
+        }
     }
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+        cancelPlaybackDelay()
         manualCallsMuted = false
         loadCallsFor(mediaItem)
         applyVolumes()
@@ -76,6 +84,15 @@ class DualAudioCoordinator(
     }
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {
+        if (isPlaying && shouldStartPlaybackDelay()) {
+            startPlaybackDelay()
+            return
+        }
+
+        if (!isPlaying && !pausingForDelay) {
+            cancelPlaybackDelay()
+        }
+
         if (isPlaying && callsLoaded && callsPlayer.volume > 0f) {
             callsPlayer.play()
         } else {
@@ -88,6 +105,7 @@ class DualAudioCoordinator(
         newPosition: Player.PositionInfo,
         reason: Int,
     ) {
+        cancelPlaybackDelay()
         if (callsLoaded) {
             callsPlayer.seekTo(newPosition.positionMs)
         }
@@ -98,6 +116,55 @@ class DualAudioCoordinator(
             callsPlayer.pause()
         }
         applyVolumes()
+    }
+
+    private fun shouldStartPlaybackDelay(): Boolean =
+        if (skipNextDelayStart) {
+            skipNextDelayStart = false
+            false
+        } else {
+            playbackDelaySettings.isEnabled &&
+                delayJob == null &&
+                musicPlayer.playbackState == Player.STATE_READY
+        }
+
+    private fun startPlaybackDelay() {
+        val seconds = playbackDelaySettings.delaySeconds.coerceAtLeast(0)
+        if (seconds == 0) {
+            return
+        }
+
+        delayJob?.cancel()
+        callsPlayer.pause()
+        pausingForDelay = true
+        musicPlayer.pause()
+        pausingForDelay = false
+
+        delayJob = scope.launch {
+            for (remaining in seconds downTo 1) {
+                PlaybackDelayStatusStore.update(
+                    PlaybackDelayStatus(
+                        isCountingDown = true,
+                        remainingSeconds = remaining,
+                    ),
+                )
+                delay(ONE_SECOND_MS)
+            }
+
+            delayJob = null
+            PlaybackDelayStatusStore.update(PlaybackDelayStatus())
+            skipNextDelayStart = true
+            musicPlayer.play()
+        }
+    }
+
+    private fun cancelPlaybackDelay() {
+        val hadDelay = delayJob != null
+        delayJob?.cancel()
+        delayJob = null
+        if (hadDelay || PlaybackDelayStatusStore.status.value.isCountingDown) {
+            PlaybackDelayStatusStore.update(PlaybackDelayStatus())
+        }
     }
 
     private fun loadCallsFor(mediaItem: MediaItem?) {
@@ -161,11 +228,9 @@ class DualAudioCoordinator(
         }
     }
 
-    @Suppress("unused")
-    private fun playbackDelaySettings(): PlaybackDelaySettings = playbackDelaySettings
-
     private companion object {
         const val MILLIS_PER_SECOND = 1_000.0
+        const val ONE_SECOND_MS = 1_000L
         const val DRIFT_CHECK_MS = 750L
         const val DRIFT_CORRECTION_MS = 200L
     }

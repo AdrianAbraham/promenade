@@ -76,6 +76,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.shadowspire.promenade2.core.model.AutoMuteSettings
+import net.shadowspire.promenade2.core.model.PlaybackDelaySettings
 import net.shadowspire.promenade2.core.model.Playlist
 import net.shadowspire.promenade2.core.model.PlaylistId
 import net.shadowspire.promenade2.core.model.PlaybackSettings
@@ -280,6 +281,14 @@ fun PromenadeApp() {
                         )
                     }
                 },
+                onSetPlaybackDelay = { playbackDelay ->
+                    connection.setPlaybackDelay(playbackDelay)
+                    appState.updatePreferences { current ->
+                        current.copy(
+                            playbackSettings = current.playbackSettings.copy(playbackDelay = playbackDelay),
+                        )
+                    }
+                },
             )
         }
     }
@@ -376,6 +385,7 @@ private fun PromenadeScreen(
     onSetBalance: (Float) -> Unit,
     onSetCallsMuted: (Boolean) -> Unit,
     onSetAutoMute: (AutoMuteSettings) -> Unit,
+    onSetPlaybackDelay: (PlaybackDelaySettings) -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -493,6 +503,7 @@ private fun PromenadeScreen(
                         onSetBalance = onSetBalance,
                         onSetCallsMuted = onSetCallsMuted,
                         onSetAutoMute = onSetAutoMute,
+                        onSetPlaybackDelay = onSetPlaybackDelay,
                     )
                 }
 
@@ -560,6 +571,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.playerContent(
     onSetBalance: (Float) -> Unit,
     onSetCallsMuted: (Boolean) -> Unit,
     onSetAutoMute: (AutoMuteSettings) -> Unit,
+    onSetPlaybackDelay: (PlaybackDelaySettings) -> Unit,
 ) {
     if (library.tracksFolder?.available != true || library.playlistsFolder?.available != true) {
         item {
@@ -603,6 +615,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.playerContent(
             onSetBalance = onSetBalance,
             onSetCallsMuted = onSetCallsMuted,
             onSetAutoMute = onSetAutoMute,
+            onSetPlaybackDelay = onSetPlaybackDelay,
         )
     }
 
@@ -1507,12 +1520,24 @@ private fun PracticeControls(
     onSetBalance: (Float) -> Unit,
     onSetCallsMuted: (Boolean) -> Unit,
     onSetAutoMute: (AutoMuteSettings) -> Unit,
+    onSetPlaybackDelay: (PlaybackDelaySettings) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeader(
             title = "Practice",
             supportingText = playback.practiceStatus(),
         )
+        if (playback.playbackDelayActive) {
+            Text(
+                text = "Starting in ${playback.playbackDelayRemainingSeconds}",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.semantics {
+                    contentDescription = "Playback starts in ${playback.playbackDelayRemainingSeconds} seconds"
+                },
+            )
+        }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
                 text = "Music / calls balance",
@@ -1550,6 +1575,37 @@ private fun PracticeControls(
             settings = settings.autoMute,
             onSetAutoMute = onSetAutoMute,
         )
+        PlaybackDelayControls(
+            settings = settings.playbackDelay,
+            onSetPlaybackDelay = onSetPlaybackDelay,
+        )
+    }
+}
+
+@Composable
+private fun PlaybackDelayControls(
+    settings: PlaybackDelaySettings,
+    onSetPlaybackDelay: (PlaybackDelaySettings) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Count-in delay",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            delayOptions.forEach { seconds ->
+                OutlinedButton(
+                    onClick = { onSetPlaybackDelay(PlaybackDelaySettings(delaySeconds = seconds)) },
+                    enabled = settings.delaySeconds != seconds,
+                ) {
+                    Text(text = if (seconds == 0) "Off" else "${seconds}s")
+                }
+            }
+        }
     }
 }
 
@@ -1758,7 +1814,12 @@ private fun PlaybackSnapshot.practiceStatus(): String {
         "rep $currentRepetition of $totalRepetitions"
     }
     val callsText = if (hasCalls) "calls available" else "music only"
-    return "$queueText - $repetitionText - $callsText"
+    val delayText = if (playbackDelayActive) {
+        "delay ${playbackDelayRemainingSeconds}s"
+    } else {
+        "ready"
+    }
+    return "$queueText - $repetitionText - $callsText - $delayText"
 }
 
 private fun LibraryDiagnostic.displayText(): String {
@@ -1785,3 +1846,4 @@ private fun formatDuration(milliseconds: Long): String {
 }
 
 private const val MAX_VISIBLE_DIAGNOSTICS = 8
+private val delayOptions = listOf(0, 3, 5, 10)

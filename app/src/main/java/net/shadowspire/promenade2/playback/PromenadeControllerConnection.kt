@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,6 +38,7 @@ class PromenadeControllerConnection(context: Context) {
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controller: MediaController? = null
     private var progressJob: Job? = null
+    private var delayStatusJob: Job? = null
 
     private val _snapshot = MutableStateFlow(PlaybackSnapshot())
     val snapshot: StateFlow<PlaybackSnapshot> = _snapshot.asStateFlow()
@@ -59,6 +61,7 @@ class PromenadeControllerConnection(context: Context) {
                 mediaController.addListener(playerListener)
                 updateFrom(mediaController)
                 startProgressUpdates()
+                startDelayStatusUpdates()
             },
             mainExecutor,
         )
@@ -67,6 +70,8 @@ class PromenadeControllerConnection(context: Context) {
     fun disconnect() {
         progressJob?.cancel()
         progressJob = null
+        delayStatusJob?.cancel()
+        delayStatusJob = null
 
         controller?.removeListener(playerListener)
         controller = null
@@ -179,7 +184,17 @@ class PromenadeControllerConnection(context: Context) {
         }
     }
 
+    private fun startDelayStatusUpdates() {
+        delayStatusJob?.cancel()
+        delayStatusJob = scope.launch {
+            PlaybackDelayStatusStore.status.collect {
+                controller?.let(::updateFrom)
+            }
+        }
+    }
+
     private fun updateFrom(player: Player) {
+        val delayStatus = PlaybackDelayStatusStore.status.value
         val durationMs = player.duration.takeIf { it != C.TIME_UNSET }?.coerceAtLeast(0L) ?: 0L
         val positionMs = player.currentPosition.coerceAtLeast(0L)
         val extras = player.currentMediaItem?.mediaMetadata?.extras
@@ -203,6 +218,8 @@ class PromenadeControllerConnection(context: Context) {
             currentRepetition = currentRepetition(positionMs, repetitionStarts),
             totalRepetitions = repetitionStarts.size,
             hasCalls = !extras?.getString(PracticeMediaMetadata.CallsUri).isNullOrBlank(),
+            playbackDelayActive = delayStatus.isCountingDown,
+            playbackDelayRemainingSeconds = delayStatus.remainingSeconds,
         )
     }
 

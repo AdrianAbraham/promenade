@@ -14,4 +14,6 @@ data class PlaybackSnapshot(
     val currentRepetition: Int = 0,
     val totalRepetitions: Int = 0,
     val hasCalls: Boolean = false,
+    val playbackDelayActive: Boolean = false,
+    val playbackDelayRemainingSeconds: Int = 0,
 )
