@@ -1,5 +1,11 @@
 package net.shadowspire.promenade2.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.os.SystemClock
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.net.toUri
@@ -15,7 +21,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -50,7 +55,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -127,6 +131,12 @@ fun PromenadeApp() {
             var destinationName by rememberSaveable {
                 mutableStateOf(PromenadeDestination.Player.name)
             }
+            var settingsOpen by rememberSaveable {
+                mutableStateOf(false)
+            }
+            var checkedInitialFolderSetup by rememberSaveable {
+                mutableStateOf(false)
+            }
             var editingPlaylistFileName by rememberSaveable {
                 mutableStateOf<String?>(null)
             }
@@ -194,6 +204,19 @@ fun PromenadeApp() {
                 }
             }
 
+            LaunchedEffect(
+                library.isScanning,
+                preferences.tracksFolder,
+                preferences.playlistsFolder,
+            ) {
+                if (!library.isScanning && !checkedInitialFolderSetup) {
+                    checkedInitialFolderSetup = true
+                    if (preferences.tracksFolder == null || preferences.playlistsFolder == null) {
+                        settingsOpen = true
+                    }
+                }
+            }
+
             PromenadeScreen(
                 destination = destination,
                 playback = playback,
@@ -204,9 +227,11 @@ fun PromenadeApp() {
                 editingPlaylist = editingPlaylist,
                 onNavigateToPlayer = { destinationName = PromenadeDestination.Player.name },
                 onNavigateToPlaylists = { destinationName = PromenadeDestination.Playlists.name },
-                onNavigateToSettings = { destinationName = PromenadeDestination.Settings.name },
+                onNavigateToSettings = { settingsOpen = true },
                 onNavigateToInstructions = { destinationName = PromenadeDestination.Instructions.name },
                 onNavigateToDiagnostics = { destinationName = PromenadeDestination.Diagnostics.name },
+                settingsOpen = settingsOpen,
+                onDismissSettings = { settingsOpen = false },
                 onChooseTracksFolder = { tracksFolderPicker.launch(null) },
                 onChoosePlaylistsFolder = { playlistsFolderPicker.launch(null) },
                 onRescan = appState::rescan,
@@ -307,7 +332,6 @@ fun PromenadeApp() {
 private enum class PromenadeDestination {
     Player,
     Playlists,
-    Settings,
     Instructions,
     Diagnostics,
 }
@@ -373,6 +397,8 @@ private fun PromenadeScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateToInstructions: () -> Unit,
     onNavigateToDiagnostics: () -> Unit,
+    settingsOpen: Boolean,
+    onDismissSettings: () -> Unit,
     onChooseTracksFolder: () -> Unit,
     onChoosePlaylistsFolder: () -> Unit,
     onRescan: () -> Unit,
@@ -397,9 +423,27 @@ private fun PromenadeScreen(
     onSetAutoMute: (AutoMuteSettings) -> Unit,
     onSetPlaybackDelay: (PlaybackDelaySettings) -> Unit,
 ) {
+    val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
     val playerListState = rememberLazyListState()
     var menuExpanded by rememberSaveable { mutableStateOf(false) }
     var practiceSettingsOpen by rememberSaveable { mutableStateOf(false) }
+    var lastPlayerBackPressMs by rememberSaveable { mutableStateOf(0L) }
+    val dialogOpen = settingsOpen || practiceSettingsOpen
+
+    BackHandler(enabled = destination == PromenadeDestination.Player && !dialogOpen) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastPlayerBackPressMs <= EXIT_BACK_PRESS_WINDOW_MS) {
+            activity?.finish()
+        } else {
+            lastPlayerBackPressMs = now
+            Toast.makeText(context, "Go back again to exit", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    BackHandler(enabled = destination != PromenadeDestination.Player && !dialogOpen) {
+        onNavigateToPlayer()
+    }
 
     LaunchedEffect(
         destination,
@@ -422,12 +466,13 @@ private fun PromenadeScreen(
                 title = {
                     Text(
                         text = when (destination) {
-                            PromenadeDestination.Player -> "Promenade 2"
+                            PromenadeDestination.Player -> activePlaylist?.playlist?.name ?: "Tracks"
                             PromenadeDestination.Playlists -> "Playlists"
-                            PromenadeDestination.Settings -> "Settings"
                             PromenadeDestination.Instructions -> "Instructions"
                             PromenadeDestination.Diagnostics -> "Diagnostics"
                         },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 },
                 actions = {
@@ -584,17 +629,6 @@ private fun PromenadeScreen(
                         )
                     }
 
-                    PromenadeDestination.Settings -> {
-                        item {
-                            FolderSetupSection(
-                                library = library,
-                                onChooseTracksFolder = onChooseTracksFolder,
-                                onChoosePlaylistsFolder = onChoosePlaylistsFolder,
-                            )
-                        }
-                        diagnosticsContent(library.diagnostics)
-                    }
-
                     PromenadeDestination.Instructions -> {
                         item {
                             InstructionsScreen(currentTrack = currentTrack)
@@ -617,6 +651,15 @@ private fun PromenadeScreen(
             onDismiss = { practiceSettingsOpen = false },
             onSetAutoMute = onSetAutoMute,
             onSetPlaybackDelay = onSetPlaybackDelay,
+        )
+    }
+
+    if (settingsOpen) {
+        SettingsDialog(
+            library = library,
+            onDismiss = onDismissSettings,
+            onChooseTracksFolder = onChooseTracksFolder,
+            onChoosePlaylistsFolder = onChoosePlaylistsFolder,
         )
     }
 }
@@ -644,17 +687,6 @@ private fun PlayerScreenContent(
             )
         }
 
-        SectionHeader(
-            title = activePlaylist?.playlist?.name ?: "Tracks",
-            supportingText = if (activePlaylist == null && library.isScanning) {
-                "Scanning folders"
-            } else if (activePlaylist == null) {
-                "${library.tracks.size} available"
-            } else {
-                null
-            },
-        )
-
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
@@ -671,6 +703,14 @@ private fun PlayerScreenContent(
                     onRemovePlaylistEntry = null,
                     onMovePlaylistEntry = null,
                 )
+            } else if (library.isScanning) {
+                item {
+                    Text(
+                        text = "Scanning folders",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             } else if (library.tracks.isEmpty()) {
                 item {
                     Text(
@@ -818,6 +858,36 @@ private fun PracticeSettingsDialog(
                     settings = settings.playbackDelay,
                     onSetPlaybackDelay = onSetPlaybackDelay,
                 )
+            }
+        },
+    )
+}
+
+@Composable
+private fun SettingsDialog(
+    library: LibraryState,
+    onDismiss: () -> Unit,
+    onChooseTracksFolder: () -> Unit,
+    onChoosePlaylistsFolder: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = "Done")
+            }
+        },
+        title = { Text(text = "Settings") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                FolderSetupSection(
+                    library = library,
+                    onChooseTracksFolder = onChooseTracksFolder,
+                    onChoosePlaylistsFolder = onChoosePlaylistsFolder,
+                )
+                if (library.diagnostics.isNotEmpty()) {
+                    DiagnosticsSection(diagnostics = library.diagnostics)
+                }
             }
         },
     )
@@ -1106,7 +1176,7 @@ private fun PlaylistEntryRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = entry.track?.trackSummary() ?: entry.trackId.jsonFileName,
+                    text = entry.track?.audioSummary() ?: entry.trackId.jsonFileName,
                     style = MaterialTheme.typography.bodySmall,
                     color = rowContentColor,
                     maxLines = 2,
@@ -1387,14 +1457,27 @@ private fun CurrentTrackHeader(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = track?.name ?: snapshot.title,
+        Column(
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = track?.name ?: snapshot.title,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (track != null) {
+                Text(
+                    text = track.practiceSummary(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
         if (track != null) {
             IconButton(
                 onClick = onNavigateToInstructions,
@@ -1652,16 +1735,6 @@ private fun PlaybackProgress(
             Text(text = formatDuration(snapshot.positionMs))
             Text(text = formatDuration(snapshot.durationMs))
         }
-
-        LinearProgressIndicator(
-            progress = { snapshot.bufferedPercentage / 100f },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(3.dp)
-                .semantics {
-                    contentDescription = "Buffered ${snapshot.bufferedPercentage} percent"
-                },
-        )
     }
 }
 
@@ -1856,7 +1929,7 @@ private fun TrackRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = track.trackSummary(),
+                    text = track.audioSummary(),
                     style = MaterialTheme.typography.bodySmall,
                     color = rowContentColor,
                     maxLines = 2,
@@ -1965,10 +2038,11 @@ private fun FolderSummary?.statusText(): String =
         else -> "$itemCount item${if (itemCount == 1) "" else "s"}"
     }
 
-private fun Track.trackSummary(): String {
-    val calls = if (callsRef == null) "music only" else "music + calls"
-    return "$intro - ${repetitions.size} repetition${if (repetitions.size == 1) "" else "s"} - $calls"
-}
+private fun Track.audioSummary(): String =
+    if (callsRef == null) "music only" else "music + calls"
+
+private fun Track.practiceSummary(): String =
+    "$intro - ${repetitions.size} repetition${if (repetitions.size == 1) "" else "s"}"
 
 private fun resolvedIndexFor(
     playlist: ResolvedPlaylist,
@@ -2024,11 +2098,19 @@ private fun formatDuration(milliseconds: Long): String {
     return "%d:%02d".format(minutes, seconds)
 }
 
+private tailrec fun Context.findActivity(): Activity? =
+    when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
+    }
+
 private data class SettingDropdownOption<T>(
     val label: String,
     val value: T,
 )
 
+private const val EXIT_BACK_PRESS_WINDOW_MS = 2_000L
 private const val MAX_VISIBLE_DIAGNOSTICS = 8
 private val delayOptions = listOf(0, 3, 5, 10)
 private val autoMuteOptions = listOf(
