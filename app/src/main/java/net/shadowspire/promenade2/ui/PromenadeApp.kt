@@ -864,7 +864,7 @@ private fun PlayerControlsBar(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     Text(
-                        text = "Music / calls",
+                        text = "Music / call balance",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1823,14 +1823,13 @@ private fun CurrentTrackHeader(
     snapshot: PlaybackSnapshot,
     onNavigateToInstructions: () -> Unit,
 ) {
-    Row(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = track?.name ?: snapshot.title,
@@ -1838,27 +1837,28 @@ private fun CurrentTrackHeader(
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
             )
-            if (track != null) {
-                Text(
-                    text = track.practiceSummary(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            if (track?.instructionsRef != null) {
+                IconButton(
+                    onClick = onNavigateToInstructions,
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Description,
+                        contentDescription = "Open instructions for ${track.name}",
+                    )
+                }
             }
         }
         if (track != null) {
-            IconButton(
-                onClick = onNavigateToInstructions,
-                enabled = track.instructionsRef != null,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Description,
-                    contentDescription = "Open instructions for ${track.name}",
-                )
-            }
+            Text(
+                text = track.practiceSummary(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -2190,7 +2190,7 @@ private fun AutoMuteControls(
     onSetAutoMute: (AutoMuteSettings) -> Unit,
 ) {
     SettingDropdown(
-        label = "Auto-mute",
+        label = "Auto-mute calls",
         selectedText = settings.displayText(),
         options = autoMuteOptions,
         selectedValue = settings,
@@ -2412,8 +2412,14 @@ private fun FolderSummary?.statusText(): String =
 private fun Track.audioSummary(): String =
     if (callsRef == null) "music only" else "music + calls"
 
-private fun Track.practiceSummary(): String =
-    "$intro - ${repetitions.size} repetition${if (repetitions.size == 1) "" else "s"}"
+private fun Track.practiceSummary(): String {
+    val repetitionSummary = "${repetitions.size} repetition${if (repetitions.size == 1) "" else "s"}"
+    return if (intro.isBlank()) {
+        repetitionSummary
+    } else {
+        "Intro: $intro | $repetitionSummary"
+    }
+}
 
 private fun resolvedIndexFor(
     playlist: ResolvedPlaylist,
