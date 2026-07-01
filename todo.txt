@@ -5,3 +5,5 @@ Instead of prefixing a track with "now" change its color scheme to show it's hig
 The playlist items should be an obvious list that looks clickable. Right now it just looks like a wall of text.
 
 Move Diagnostics, Refresh, and Settings into a hamburger menu.
+
+Move the instructions button to the right of the title of the current track.

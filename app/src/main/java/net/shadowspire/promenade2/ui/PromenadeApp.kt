@@ -4,6 +4,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.net.toUri
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -63,8 +64,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
@@ -81,6 +87,10 @@ import net.shadowspire.promenade2.data.library.LibraryState
 import net.shadowspire.promenade2.data.playlist.PlaylistEntryResolution
 import net.shadowspire.promenade2.data.playlist.ResolvedPlaylist
 import net.shadowspire.promenade2.data.preferences.AppPreferences
+import net.shadowspire.promenade2.domain.instructions.MarkdownBlock
+import net.shadowspire.promenade2.domain.instructions.MarkdownInline
+import net.shadowspire.promenade2.domain.instructions.MarkdownInstructionDocument
+import net.shadowspire.promenade2.domain.instructions.MarkdownInstructionParser
 import net.shadowspire.promenade2.playback.PlaybackSnapshot
 import net.shadowspire.promenade2.playback.PromenadeControllerConnection
 
@@ -1244,13 +1254,154 @@ private fun InstructionsScreen(currentTrack: Track?) {
             }
 
             else -> {
-                Text(
-                    text = instructionText.orEmpty(),
+                MarkdownInstructionContent(text = instructionText.orEmpty())
+            }
+        }
+    }
+}
+
+@Composable
+private fun MarkdownInstructionContent(text: String) {
+    val parsed = remember(text) {
+        runCatching {
+            MarkdownInstructionParser.parse(text)
+        }
+    }
+    val document = parsed.getOrNull()
+    if (document == null) {
+        PlainInstructionText(text = text)
+    } else {
+        MarkdownInstructionDocumentView(document = document)
+    }
+}
+
+@Composable
+private fun MarkdownInstructionDocumentView(document: MarkdownInstructionDocument) {
+    if (document.blocks.isEmpty()) {
+        PlainInstructionText(text = "")
+        return
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        document.blocks.forEach { block ->
+            when (block) {
+                is MarkdownBlock.Heading -> MarkdownInlineText(
+                    content = block.content,
+                    style = when (block.level) {
+                        1 -> MaterialTheme.typography.headlineSmall
+                        2 -> MaterialTheme.typography.titleLarge
+                        3 -> MaterialTheme.typography.titleMedium
+                        else -> MaterialTheme.typography.titleSmall
+                    },
+                    fontWeight = FontWeight.SemiBold,
+                )
+
+                is MarkdownBlock.Paragraph -> MarkdownInlineText(
+                    content = block.content,
                     style = MaterialTheme.typography.bodyMedium,
+                )
+
+                is MarkdownBlock.BulletList -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    block.items.forEach { item ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "-",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            MarkdownInlineText(
+                                content = item,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                    }
+                }
+
+                is MarkdownBlock.BlockQuote -> MarkdownInlineText(
+                    content = listOf(MarkdownInline.Text("| ")) + block.content,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontStyle = FontStyle.Italic,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                is MarkdownBlock.CodeBlock -> Text(
+                    text = block.code.ifBlank { " " },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceContainer)
+                        .padding(12.dp),
                 )
             }
         }
     }
+}
+
+@Composable
+private fun MarkdownInlineText(
+    content: List<MarkdownInline>,
+    style: androidx.compose.ui.text.TextStyle,
+    fontWeight: FontWeight? = null,
+    fontStyle: FontStyle? = null,
+    color: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface,
+) {
+    val linkColor = MaterialTheme.colorScheme.primary
+    Text(
+        text = buildAnnotatedString {
+            content.forEach { inline ->
+                when (inline) {
+                    is MarkdownInline.Text -> append(inline.value)
+                    is MarkdownInline.Emphasis -> pushAndAppend(
+                        text = inline.value,
+                        style = SpanStyle(fontStyle = FontStyle.Italic),
+                    )
+
+                    is MarkdownInline.Strong -> pushAndAppend(
+                        text = inline.value,
+                        style = SpanStyle(fontWeight = FontWeight.Bold),
+                    )
+
+                    is MarkdownInline.Code -> pushAndAppend(
+                        text = inline.value,
+                        style = SpanStyle(
+                            fontFamily = FontFamily.Monospace,
+                            background = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        ),
+                    )
+
+                    is MarkdownInline.Link -> pushAndAppend(
+                        text = "${inline.label} (${inline.url})",
+                        style = SpanStyle(
+                            color = linkColor,
+                            textDecoration = TextDecoration.Underline,
+                        ),
+                    )
+                }
+            }
+        },
+        style = style,
+        fontWeight = fontWeight,
+        fontStyle = fontStyle,
+        color = color,
+    )
+}
+
+@Composable
+private fun PlainInstructionText(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodyMedium,
+    )
+}
+
+private fun androidx.compose.ui.text.AnnotatedString.Builder.pushAndAppend(
+    text: String,
+    style: SpanStyle,
+) {
+    pushStyle(style)
+    append(text)
+    pop()
 }
 
 @Composable

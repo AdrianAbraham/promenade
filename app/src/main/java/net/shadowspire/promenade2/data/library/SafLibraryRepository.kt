@@ -138,22 +138,6 @@ class SafLibraryRepository(context: Context) {
         )
     }
 
-    private fun scanFolderSummary(folder: FolderRef?): FolderSummary? {
-        if (folder == null) {
-            return null
-        }
-
-        val document = folder.toDocumentFile()
-        if (document == null || !document.canRead()) {
-            return FolderSummary(folder, available = false, itemCount = 0)
-        }
-
-        val jsonFileCount = document.listFiles().count { child ->
-            child.isFile && child.name?.endsWith(JSON_EXTENSION, ignoreCase = true) == true
-        }
-        return FolderSummary(folder, available = true, itemCount = jsonFileCount)
-    }
-
     private fun scanPlaylistsFolder(
         folder: FolderRef?,
         tracks: List<Track>,
@@ -164,11 +148,11 @@ class SafLibraryRepository(context: Context) {
         }
 
         val document = folder.toDocumentFile()
-        if (document == null || !document.canRead()) {
+        if (document == null || !document.canRead() || !document.canWrite()) {
             diagnostics += LibraryDiagnostic(
                 severity = Severity.Error,
                 fileName = null,
-                message = "Promenade can no longer access the playlists folder. Choose it again.",
+                message = "Promenade can no longer read and write the playlists folder. Choose it again.",
             )
             return PlaylistScan(
                 summary = FolderSummary(folder, available = false, itemCount = 0),
